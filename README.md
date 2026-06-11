@@ -10,7 +10,7 @@ A [Dank Material Shell](https://danklinux.com) bar widget that groups related ap
 
 The built-in Apps Dock widget in DMS shows a single shared list of pinned apps across all instances. App Stack solves this by giving each copy of the plugin its own independent app list, so you can have a "Dev Tools" icon and a "Media" icon on your bar that each open their own curated set of shortcuts.
 
-![App Stack popout](docs/screenshot.webp)
+<img src="docs/screenshot.webp" width="50%" alt="App Stack popout">
 
 ---
 
