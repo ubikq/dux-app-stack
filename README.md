@@ -4,6 +4,8 @@ A [Dank Material Shell](https://danklinux.com) bar widget that groups related ap
 
 ![Plugin type: widget](https://img.shields.io/badge/type-widget-blue) ![DMS](https://img.shields.io/badge/DMS-1.4%2B-green) ![License: GPL v2](https://img.shields.io/badge/License-GPL%20v2-blue.svg)
 
+> **Compatibility:** Tested on [niri](https://github.com/YaLTeR/niri) with Dank Material Shell only. Behaviour on other compositors or DMS versions is untested.
+
 ---
 
 ## Overview
@@ -160,6 +162,20 @@ Test the app scanner script directly:
 ```bash
 python3 ~/.config/DankMaterialShell/plugins/appStack_default/scripts/list-apps.py | python3 -m json.tool | head -40
 ```
+
+---
+
+## Disclaimer
+
+This plugin is provided as-is, with no warranty of any kind. Use it at your own risk.
+
+Before installing or creating additional groups, **back up your DMS configuration**:
+
+```bash
+cp -r ~/.config/DankMaterialShell ~/.config/DankMaterialShell.bak
+```
+
+The create-group script copies and modifies files inside your DMS plugins directory. Always verify the results before restarting DMS. The author accepts no responsibility for lost configuration, broken setups, or any other damage arising from the use of this software.
 
 ---
 
