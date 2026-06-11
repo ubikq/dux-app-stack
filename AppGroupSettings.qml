@@ -302,12 +302,18 @@ PluginSettings {
     onPickerFilterChanged: filterSystemApps()
 
     // ── Initialise from saved settings ────────────────────────────────────
+    function reloadIconInput() {
+        iconNameInput._initialized = false
+        iconNameInput.text = root.loadValue("groupIcon", "apps")
+        iconNameInput._initialized = true
+    }
+
     Component.onCompleted: {
-        Qt.callLater(function() {
-            iconNameInput._initialized = false
-            iconNameInput.text = pluginData.groupIcon || "apps"
-            iconNameInput._initialized = true
-        })
+        Qt.callLater(reloadIconInput)
+    }
+
+    onPluginServiceChanged: {
+        if (pluginService) Qt.callLater(reloadIconInput)
     }
 
     // ── System app scanner ────────────────────────────────────────────────
