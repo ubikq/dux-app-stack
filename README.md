@@ -4,7 +4,7 @@ A [Dank Material Shell](https://danklinux.com) bar widget that groups related ap
 
 ![Plugin type: widget](https://img.shields.io/badge/type-widget-blue) ![DMS](https://img.shields.io/badge/DMS-1.4%2B-green) ![License: GPL v2](https://img.shields.io/badge/License-GPL%20v2-blue.svg)
 
-> **Compatibility:** Tested on [niri](https://github.com/YaLTeR/niri) with Dank Material Shell only. Behaviour on other compositors or DMS versions is untested.
+> **Compatibility:** Tested on [niri](https://github.com/YaLTeR/niri) with Dank Material Shell only. Behaviour on other compositors or DMS versions has not been confirmed.
 
 ---
 
