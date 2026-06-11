@@ -10,7 +10,7 @@ import qs.Widgets
 // When copying this plugin for a second group, update BOTH files.
 PluginSettings {
     id: root
-    pluginId: "appGroup"
+    pluginId: "appStack_default"
 
     // ── Persistent storage ────────────────────────────────────────────────
     // ── Standard group settings ───────────────────────────────────────────
@@ -18,8 +18,8 @@ PluginSettings {
         settingKey: "groupName"
         label: "Group Label"
         description: "Name shown in the popout header"
-        placeholder: "App Group"
-        defaultValue: "App Group"
+        placeholder: "App Stack"
+        defaultValue: "App Stack"
     }
 
     // Registers the appsData key with DMS so pluginData.appsData is populated
@@ -230,12 +230,24 @@ PluginSettings {
 
     ListModel { id: systemAppsModel }
     ListModel { id: filteredApps }
+    ListModel { id: appIconMatches }
 
     property bool pickerVisible: false
     property bool pickerLoading: false
     property bool pickerFailed: false
     property string pickerFilter: ""
     property bool confirmCreateVisible: false
+    property bool createFormVisible: false
+    property int editingIndex: -1
+    property string _manualIconPath: ""
+    property bool _iconSetByCode: false
+    property bool appIconPickerVisible: false
+    property string appIconPickerFilter: ""
+
+    readonly property string _newGroupId:
+        "appStack_" + groupSuffixInput.text.trim().replace(/\s+/g, "_")
+    readonly property string _newGroupName:
+        "App Stack - " + groupSuffixInput.text.trim()
     property bool iconPickerVisible: false
     property string iconPickerFilter: ""
     property bool showManualForm: false
@@ -260,6 +272,11 @@ PluginSettings {
         if (!f) return root.iconList
         return root.iconList.filter(function(n) { return n.includes(f) })
     }
+    property var filteredAppIconList: {
+        var f = root.appIconPickerFilter
+        if (!f) return root.iconList
+        return root.iconList.filter(function(n) { return n.includes(f) })
+    }
 
     // Resolved paths (strips file:// prefix from Qt URL)
     readonly property string pluginDir: Qt.resolvedUrl(".").toString().replace(/^file:\/\//, "")
@@ -277,7 +294,8 @@ PluginSettings {
         }
         var newList = root.appsArray.slice()
         newList.push({ name: appData.name, icon: appData.icon || "apps",
-                       iconPath: appData.iconPath || "", exec: appData.exec })
+                       iconPath: appData.iconPath || "", exec: appData.exec,
+                       source: appData.source || "manual" })
         root.persistApps(newList)
     }
 
@@ -300,6 +318,63 @@ PluginSettings {
     }
 
     onPickerFilterChanged: filterSystemApps()
+    onAppIconPickerFilterChanged: filterAppIconMatches()
+
+    function tryAutoDetectIcon() {
+        if (iconInput.text !== "") return
+        var n = nameInput.text.trim().toLowerCase()
+        var e = execInput.text.trim().toLowerCase()
+        var execBase = e.split(" ")[0].split("/").pop()
+        if (!n && !execBase) return
+        var bestApp = null
+        var bestScore = -1
+        for (var i = 0; i < systemAppsModel.count; i++) {
+            var app = systemAppsModel.get(i)
+            var appExec = (app.exec || "").toLowerCase()
+            var appExecBase = appExec.split(" ")[0].split("/").pop()
+            var score = 0
+            if (execBase && appExecBase === execBase) score += 10
+            else if (n && app.name.toLowerCase() === n) score += 8
+            else continue
+            // Penalise PWA wrappers and multi-flag entries
+            if (appExec.includes("--app-id=")) score -= 8
+            if (appExec.includes("--profile-directory=")) score -= 3
+            // Prefer shorter exec (real apps are simpler)
+            score -= appExec.length / 200
+            // Bonus if name contains the exec base
+            if (appExecBase && app.name.toLowerCase().includes(appExecBase)) score += 2
+            if (score > bestScore) { bestScore = score; bestApp = app }
+        }
+        if (bestApp) {
+            root._iconSetByCode = true
+            iconInput.text = bestApp.icon || "apps"
+            root._manualIconPath = bestApp.iconPath || ""
+            root._iconSetByCode = false
+        }
+    }
+
+    function filterAppIconMatches() {
+        appIconMatches.clear()
+        var f = root.appIconPickerFilter.toLowerCase()
+        var n = nameInput.text.trim().toLowerCase()
+        var e = execInput.text.trim().toLowerCase()
+        var execBase = e.split(" ")[0].split("/").pop()
+        for (var i = 0; i < systemAppsModel.count && appIconMatches.count < 30; i++) {
+            var app = systemAppsModel.get(i)
+            var appExec = (app.exec || "").toLowerCase()
+            var appExecBase = appExec.split(" ")[0].split("/").pop()
+            var hit = false
+            if (f === "") {
+                var execMatch = execBase && appExecBase === execBase
+                var nameMatch = n && app.name.toLowerCase() === n
+                // Exclude PWA wrappers from the default "matched apps" view
+                hit = (execMatch || nameMatch) && !appExec.includes("--app-id=")
+            } else {
+                hit = app.name.toLowerCase().includes(f) || appExecBase.includes(f)
+            }
+            if (hit) appIconMatches.append(app)
+        }
+    }
 
     // ── Initialise from saved settings ────────────────────────────────────
     function reloadIconInput() {
@@ -329,6 +404,10 @@ PluginSettings {
                     systemAppsModel.clear()
                     for (var i = 0; i < apps.length; i++) systemAppsModel.append(apps[i])
                     root.filterSystemApps()
+                    if (root.showManualForm && iconInput.text === "")
+                        Qt.callLater(root.tryAutoDetectIcon)
+                    if (root.appIconPickerVisible)
+                        Qt.callLater(root.filterAppIconMatches)
                 } catch(e) {}
                 root.pickerLoading = false
             }
@@ -366,79 +445,306 @@ PluginSettings {
             model: root.appsArray
 
             delegate: Item {
+                id: delegateRoot
                 width: parent.width
-                height: iconItem.height + Theme.spacingS * 2
+                property bool isEditing: root.editingIndex === index
+                height: isEditing ? editForm.implicitHeight + Theme.spacingS * 2
+                                  : Theme.iconSize + Theme.spacingS * 2
 
-                // App icon (file or material)
+                // ── Display row ───────────────────────────────────────────
                 Item {
-                    id: iconItem
-                    width: Theme.iconSize
-                    height: Theme.iconSize
-                    anchors { left: parent.left; verticalCenter: parent.verticalCenter }
-
-                    Image {
-                        visible: modelData.iconPath !== ""
-                        source: modelData.iconPath !== "" ? ("file://" + modelData.iconPath) : ""
-                        width: Theme.iconSize; height: Theme.iconSize
-                        fillMode: Image.PreserveAspectFit; smooth: true
-                        anchors.fill: parent
-                    }
-                    DankIcon {
-                        visible: modelData.iconPath === ""
-                        name: modelData.icon || "apps"
-                        size: Theme.iconSize
-                        color: Theme.primary
-                        anchors.centerIn: parent
-                    }
-                }
-
-                // Name + exec
-                Column {
+                    id: displayRow
                     anchors {
-                        left: iconItem.right; leftMargin: Theme.spacingS
-                        right: removeBtn.left; rightMargin: Theme.spacingS
-                        verticalCenter: parent.verticalCenter
+                        left: parent.left; right: parent.right
+                        top: parent.top; topMargin: Theme.spacingS
                     }
-                    spacing: 2
+                    height: Theme.iconSize
+                    visible: !delegateRoot.isEditing
 
-                    StyledText {
-                        text: modelData.name || "(unnamed)"
-                        font.pixelSize: Theme.fontSizeMedium
-                        color: Theme.surfaceText
-                        elide: Text.ElideRight
-                        width: parent.width
+                    // App icon (file or material)
+                    Item {
+                        id: iconItem
+                        width: Theme.iconSize
+                        height: Theme.iconSize
+                        anchors { left: parent.left; verticalCenter: parent.verticalCenter }
+
+                        Image {
+                            visible: modelData.iconPath !== ""
+                            source: modelData.iconPath !== "" ? ("file://" + modelData.iconPath) : ""
+                            width: Theme.iconSize; height: Theme.iconSize
+                            fillMode: Image.PreserveAspectFit; smooth: true
+                            anchors.fill: parent
+                        }
+                        DankIcon {
+                            visible: modelData.iconPath === ""
+                            name: modelData.icon || "apps"
+                            size: Theme.iconSize
+                            color: Theme.primary
+                            anchors.centerIn: parent
+                        }
                     }
-                    StyledText {
-                        text: modelData.exec || ""
-                        font.pixelSize: Theme.fontSizeSmall
-                        color: Theme.surfaceVariantText
-                        elide: Text.ElideRight
-                        width: parent.width
+
+                    // Name + exec (exec hidden for picker apps)
+                    Column {
+                        anchors {
+                            left: iconItem.right; leftMargin: Theme.spacingS
+                            right: displayBtns.left; rightMargin: Theme.spacingS
+                            verticalCenter: parent.verticalCenter
+                        }
+                        spacing: 2
+
+                        StyledText {
+                            text: modelData.name || "(unnamed)"
+                            font.pixelSize: Theme.fontSizeMedium
+                            color: Theme.surfaceText
+                            elide: Text.ElideRight
+                            width: parent.width
+                        }
+                        StyledText {
+                            visible: modelData.source !== "picker"
+                            text: modelData.exec || ""
+                            font.pixelSize: Theme.fontSizeSmall
+                            color: Theme.surfaceVariantText
+                            elide: Text.ElideRight
+                            width: parent.width
+                        }
+                    }
+
+                    // Pencil + remove buttons
+                    Row {
+                        id: displayBtns
+                        anchors { right: parent.right; verticalCenter: parent.verticalCenter }
+                        spacing: 0
+
+                        // Pencil (edit) — manual/legacy apps only
+                        Item {
+                            width: Theme.iconSize + Theme.spacingS
+                            height: Theme.iconSize
+                            visible: modelData.source !== "picker"
+
+                            DankIcon {
+                                name: "edit"
+                                size: Theme.iconSize
+                                color: editMouse.containsMouse ? Theme.primary : Theme.surfaceVariantText
+                                anchors.centerIn: parent
+                            }
+                            MouseArea {
+                                id: editMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.editingIndex = index
+                            }
+                        }
+
+                        // Remove
+                        Item {
+                            width: Theme.iconSize + Theme.spacingS
+                            height: Theme.iconSize
+
+                            DankIcon {
+                                name: "close"
+                                size: Theme.iconSize
+                                color: removeMouse.containsMouse ? Theme.error : Theme.surfaceVariantText
+                                anchors.centerIn: parent
+                            }
+                            MouseArea {
+                                id: removeMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    var idx = index
+                                    var newList = root.appsArray.filter(function(_, i) { return i !== idx })
+                                    root.persistApps(newList)
+                                }
+                            }
+                        }
                     }
                 }
 
-                // Remove button
-                Item {
-                    id: removeBtn
-                    width: Theme.iconSize + Theme.spacingS
-                    height: Theme.iconSize
-                    anchors { right: parent.right; verticalCenter: parent.verticalCenter }
-
-                    DankIcon {
-                        name: "close"
-                        size: Theme.iconSize
-                        color: removeMouse.containsMouse ? Theme.error : Theme.surfaceVariantText
-                        anchors.centerIn: parent
+                // ── Edit form (manual apps only) ──────────────────────────
+                Column {
+                    id: editForm
+                    anchors {
+                        left: parent.left; right: parent.right
+                        top: parent.top; topMargin: Theme.spacingS
                     }
-                    MouseArea {
-                        id: removeMouse
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            var idx = index
-                            var newList = root.appsArray.filter(function(_, i) { return i !== idx })
-                            root.persistApps(newList)
+                    spacing: Theme.spacingXS
+                    visible: delegateRoot.isEditing
+
+                    Column {
+                        width: parent.width
+                        spacing: 4
+
+                        StyledText {
+                            text: "Name"
+                            font.pixelSize: Theme.fontSizeSmall
+                            color: Theme.surfaceVariantText
+                        }
+                        StyledRect {
+                            width: parent.width
+                            height: editNameInput.implicitHeight + Theme.spacingM * 2
+                            color: Theme.surfaceContainerHigh
+                            radius: Theme.cornerRadius
+
+                            TextInput {
+                                id: editNameInput
+                                anchors {
+                                    left: parent.left; right: parent.right
+                                    verticalCenter: parent.verticalCenter
+                                    leftMargin: Theme.spacingM; rightMargin: Theme.spacingM
+                                }
+                                text: modelData.name || ""
+                                color: Theme.surfaceText
+                                font.pixelSize: Theme.fontSizeMedium
+                                clip: true
+                                Text {
+                                    visible: editNameInput.text === ""
+                                    text: "App name"
+                                    color: Theme.surfaceVariantText
+                                    font: editNameInput.font
+                                }
+                            }
+                        }
+                    }
+
+                    Column {
+                        width: parent.width
+                        spacing: 4
+
+                        StyledText {
+                            text: "Icon (material icon name)"
+                            font.pixelSize: Theme.fontSizeSmall
+                            color: Theme.surfaceVariantText
+                        }
+                        StyledRect {
+                            width: parent.width
+                            height: editIconInput.implicitHeight + Theme.spacingM * 2
+                            color: Theme.surfaceContainerHigh
+                            radius: Theme.cornerRadius
+
+                            TextInput {
+                                id: editIconInput
+                                anchors {
+                                    left: parent.left; right: parent.right
+                                    verticalCenter: parent.verticalCenter
+                                    leftMargin: Theme.spacingM; rightMargin: Theme.spacingM
+                                }
+                                text: modelData.icon || ""
+                                color: Theme.surfaceText
+                                font.pixelSize: Theme.fontSizeMedium
+                                clip: true
+                                Text {
+                                    visible: editIconInput.text === ""
+                                    text: "e.g. apps"
+                                    color: Theme.surfaceVariantText
+                                    font: editIconInput.font
+                                }
+                            }
+                        }
+                    }
+
+                    Column {
+                        width: parent.width
+                        spacing: 4
+
+                        StyledText {
+                            text: "Command"
+                            font.pixelSize: Theme.fontSizeSmall
+                            color: Theme.surfaceVariantText
+                        }
+                        StyledRect {
+                            width: parent.width
+                            height: editExecInput.implicitHeight + Theme.spacingM * 2
+                            color: Theme.surfaceContainerHigh
+                            radius: Theme.cornerRadius
+
+                            TextInput {
+                                id: editExecInput
+                                anchors {
+                                    left: parent.left; right: parent.right
+                                    verticalCenter: parent.verticalCenter
+                                    leftMargin: Theme.spacingM; rightMargin: Theme.spacingM
+                                }
+                                text: modelData.exec || ""
+                                color: Theme.surfaceText
+                                font.pixelSize: Theme.fontSizeMedium
+                                clip: true
+                                Text {
+                                    visible: editExecInput.text === ""
+                                    text: "Shell command"
+                                    color: Theme.surfaceVariantText
+                                    font: editExecInput.font
+                                }
+                            }
+                        }
+                    }
+
+                    Row {
+                        spacing: Theme.spacingS
+
+                        StyledRect {
+                            height: saveEditLabel.implicitHeight + Theme.spacingS * 2
+                            width: saveEditLabel.implicitWidth + Theme.spacingL * 2
+                            radius: Theme.cornerRadius
+                            color: saveEditMouse.containsMouse ? Theme.primary
+                                   : Theme.surfaceContainerHighest || Theme.surfaceContainerHigh
+
+                            StyledText {
+                                id: saveEditLabel
+                                anchors.centerIn: parent
+                                text: "Save"
+                                font.pixelSize: Theme.fontSizeMedium
+                                color: saveEditMouse.containsMouse
+                                       ? Theme.onPrimary || Theme.surface : Theme.primary
+                            }
+                            MouseArea {
+                                id: saveEditMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    var n = editNameInput.text.trim()
+                                    var e = editExecInput.text.trim()
+                                    if (!n || !e) {
+                                        ToastService.showInfo("Incomplete",
+                                            "Name and Command are required")
+                                        return
+                                    }
+                                    var newList = root.appsArray.slice()
+                                    newList[index] = {
+                                        name: n,
+                                        icon: editIconInput.text.trim() || "apps",
+                                        iconPath: modelData.iconPath,
+                                        exec: e,
+                                        source: "manual"
+                                    }
+                                    root.persistApps(newList)
+                                    root.editingIndex = -1
+                                }
+                            }
+                        }
+
+                        StyledRect {
+                            height: cancelEditLabel.implicitHeight + Theme.spacingS * 2
+                            width: cancelEditLabel.implicitWidth + Theme.spacingL * 2
+                            radius: Theme.cornerRadius
+                            color: Theme.surfaceContainerHigh
+
+                            StyledText {
+                                id: cancelEditLabel
+                                anchors.centerIn: parent
+                                text: "Cancel"
+                                font.pixelSize: Theme.fontSizeMedium
+                                color: Theme.surfaceVariantText
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.editingIndex = -1
+                            }
                         }
                     }
                 }
@@ -538,6 +844,9 @@ PluginSettings {
                             nameInput.text = ""
                             iconInput.text = ""
                             execInput.text = ""
+                            root._manualIconPath = ""
+                            root.appIconPickerVisible = false
+                            root.appIconPickerFilter = ""
                         }
                     }
                 }
@@ -578,6 +887,7 @@ PluginSettings {
                         font.pixelSize: Theme.fontSizeMedium
                         clip: true
                         onAccepted: if (execInput.text.trim()) root.commitManualAdd()
+                        onTextChanged: if (iconInput.text === "") Qt.callLater(root.tryAutoDetectIcon)
                         Text {
                             visible: nameInput.text === ""
                             text: "App name (e.g. Firefox)"
@@ -594,31 +904,297 @@ PluginSettings {
                 spacing: 4
 
                 StyledText {
-                    text: "Icon (material icon name)"
+                    text: "Icon"
                     font.pixelSize: Theme.fontSizeSmall
                     color: Theme.surfaceVariantText
                 }
-                StyledRect {
-                    width: parent.width
-                    height: iconInput.implicitHeight + Theme.spacingM * 2
-                    color: Theme.surfaceContainerHigh
-                    radius: Theme.cornerRadius
 
-                    TextInput {
-                        id: iconInput
-                        anchors {
-                            left: parent.left; right: parent.right
-                            verticalCenter: parent.verticalCenter
-                            leftMargin: Theme.spacingM; rightMargin: Theme.spacingM
+                // Preview + text input + Choose button
+                Row {
+                    width: parent.width
+                    spacing: Theme.spacingS
+
+                    // Live icon preview
+                    Item {
+                        width: Theme.iconSize
+                        height: Theme.iconSize
+                        anchors.verticalCenter: parent.verticalCenter
+
+                        Image {
+                            visible: root._manualIconPath !== ""
+                            source: root._manualIconPath !== "" ? ("file://" + root._manualIconPath) : ""
+                            width: Theme.iconSize; height: Theme.iconSize
+                            fillMode: Image.PreserveAspectFit; smooth: true
+                            anchors.fill: parent
                         }
-                        color: Theme.surfaceText
-                        font.pixelSize: Theme.fontSizeMedium
-                        clip: true
-                        Text {
-                            visible: iconInput.text === ""
-                            text: "apps  (see fonts.google.com/icons)"
+                        DankIcon {
+                            visible: root._manualIconPath === ""
+                            name: iconInput.text || "apps"
+                            size: Theme.iconSize
+                            color: Theme.primary
+                            anchors.centerIn: parent
+                        }
+                    }
+
+                    StyledRect {
+                        height: iconInput.implicitHeight + Theme.spacingM * 2
+                        width: parent.width - Theme.iconSize - chooseIconBtn.width
+                               - Theme.spacingS * 2
+                        color: Theme.surfaceContainerHigh
+                        radius: Theme.cornerRadius
+
+                        TextInput {
+                            id: iconInput
+                            anchors {
+                                left: parent.left; right: parent.right
+                                verticalCenter: parent.verticalCenter
+                                leftMargin: Theme.spacingM; rightMargin: Theme.spacingM
+                            }
+                            color: Theme.surfaceText
+                            font.pixelSize: Theme.fontSizeMedium
+                            clip: true
+                            onTextChanged: if (!root._iconSetByCode) root._manualIconPath = ""
+                            Text {
+                                visible: iconInput.text === ""
+                                text: "auto-detect from name/command"
+                                color: Theme.surfaceVariantText
+                                font: iconInput.font
+                            }
+                        }
+                    }
+
+                    StyledRect {
+                        id: chooseIconBtn
+                        height: chooseIconBtnLabel.implicitHeight + Theme.spacingS * 2
+                        width: chooseIconBtnLabel.implicitWidth + Theme.spacingM * 2
+                        radius: Theme.cornerRadius
+                        color: (chooseIconMouse.containsMouse || root.appIconPickerVisible)
+                               ? Theme.primaryContainer || Theme.surfaceContainerHighest
+                               : Theme.surfaceContainerHigh
+                        anchors.verticalCenter: parent.verticalCenter
+
+                        StyledText {
+                            id: chooseIconBtnLabel
+                            anchors.centerIn: parent
+                            text: "Choose"
+                            font.pixelSize: Theme.fontSizeMedium
+                            color: (chooseIconMouse.containsMouse || root.appIconPickerVisible)
+                                   ? Theme.onPrimary || Theme.surface : Theme.primary
+                        }
+                        MouseArea {
+                            id: chooseIconMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                root.appIconPickerVisible = !root.appIconPickerVisible
+                                if (root.appIconPickerVisible) {
+                                    root.appIconPickerFilter = ""
+                                    appIconPickerSearch.text = ""
+                                    if (systemAppsModel.count === 0 && !root.pickerLoading) {
+                                        root.pickerFailed = false
+                                        root.pickerLoading = true
+                                        appScanner.running = true
+                                    }
+                                    root.filterAppIconMatches()
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ── App icon picker ───────────────────────────────────────
+                Column {
+                    visible: root.appIconPickerVisible
+                    width: parent.width
+                    spacing: Theme.spacingXS
+
+                    StyledRect {
+                        width: parent.width
+                        height: appIconPickerSearch.implicitHeight + Theme.spacingM * 2
+                        color: Theme.surfaceContainerHigh
+                        radius: Theme.cornerRadius
+
+                        TextInput {
+                            id: appIconPickerSearch
+                            anchors {
+                                left: parent.left; right: parent.right
+                                verticalCenter: parent.verticalCenter
+                                leftMargin: Theme.spacingM; rightMargin: Theme.spacingM
+                            }
+                            color: Theme.surfaceText
+                            font.pixelSize: Theme.fontSizeMedium
+                            clip: true
+                            onTextChanged: root.appIconPickerFilter = text
+                            Text {
+                                visible: appIconPickerSearch.text === ""
+                                text: "Search apps or icons…"
+                                color: Theme.surfaceVariantText
+                                font: appIconPickerSearch.font
+                            }
+                        }
+                    }
+
+                    StyledText {
+                        visible: root.pickerLoading
+                        text: "Scanning installed applications…"
+                        font.pixelSize: Theme.fontSizeSmall
+                        color: Theme.surfaceVariantText
+                    }
+
+                    // Matched app icons from .desktop files
+                    Column {
+                        visible: appIconMatches.count > 0
+                        width: parent.width
+                        spacing: 2
+
+                        StyledText {
+                            text: root.appIconPickerFilter === "" ? "Matched apps" : "App results"
+                            font.pixelSize: Theme.fontSizeSmall
                             color: Theme.surfaceVariantText
-                            font: iconInput.font
+                        }
+
+                        Repeater {
+                            model: appIconMatches
+
+                            delegate: Item {
+                                width: parent.width
+                                height: Theme.iconSize + Theme.spacingXS * 2
+
+                                StyledRect {
+                                    anchors { left: parent.left; right: parent.right
+                                              top: parent.top; bottom: parent.bottom; margins: 1 }
+                                    radius: Theme.cornerRadius
+                                    color: appMatchMouse.containsMouse
+                                           ? Theme.surfaceContainerHighest : Theme.surfaceContainerHigh
+
+                                    Row {
+                                        anchors {
+                                            left: parent.left; right: parent.right
+                                            verticalCenter: parent.verticalCenter
+                                            leftMargin: Theme.spacingS; rightMargin: Theme.spacingS
+                                        }
+                                        spacing: Theme.spacingS
+
+                                        // Icon — explicit height fixes Row's implicit height
+                                        Item {
+                                            width: Theme.iconSize; height: Theme.iconSize
+
+                                            Image {
+                                                visible: iconPath !== ""
+                                                source: iconPath !== "" ? ("file://" + iconPath) : ""
+                                                width: Theme.iconSize; height: Theme.iconSize
+                                                fillMode: Image.PreserveAspectFit; smooth: true
+                                                anchors.fill: parent
+                                            }
+                                            DankIcon {
+                                                visible: iconPath === ""
+                                                name: icon || "apps"
+                                                size: Theme.iconSize
+                                                color: Theme.primary
+                                                anchors.centerIn: parent
+                                            }
+                                        }
+
+                                        // Name — wrapped in Item so text can vertically centre
+                                        Item {
+                                            width: parent.width - Theme.iconSize - Theme.spacingS
+                                            height: Theme.iconSize
+
+                                            StyledText {
+                                                text: name || ""
+                                                font.pixelSize: Theme.fontSizeMedium
+                                                color: Theme.surfaceText
+                                                elide: Text.ElideRight
+                                                width: parent.width
+                                                anchors.verticalCenter: parent.verticalCenter
+                                            }
+                                        }
+                                    }
+
+                                    MouseArea {
+                                        id: appMatchMouse
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: {
+                                            root._iconSetByCode = true
+                                            iconInput.text = icon || "apps"
+                                            root._manualIconPath = iconPath || ""
+                                            root._iconSetByCode = false
+                                            root.appIconPickerVisible = false
+                                            root.appIconPickerFilter = ""
+                                            appIconPickerSearch.text = ""
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Material icons grid
+                    StyledText {
+                        text: "Material icons"
+                        font.pixelSize: Theme.fontSizeSmall
+                        color: Theme.surfaceVariantText
+                    }
+
+                    Flow {
+                        width: parent.width
+                        spacing: 4
+
+                        Repeater {
+                            model: root.filteredAppIconList
+
+                            delegate: Item {
+                                width: 68; height: 68
+
+                                StyledRect {
+                                    anchors.fill: parent
+                                    anchors.margins: 2
+                                    radius: Theme.cornerRadius
+                                    color: appIconCellMouse.containsMouse
+                                           ? Theme.surfaceContainerHighest : Theme.surfaceContainerHigh
+
+                                    Column {
+                                        anchors.centerIn: parent
+                                        spacing: 2
+
+                                        DankIcon {
+                                            name: modelData
+                                            size: Theme.iconSize
+                                            color: (iconInput.text === modelData && root._manualIconPath === "")
+                                                   ? Theme.primary : Theme.surfaceText
+                                            anchors.horizontalCenter: parent.horizontalCenter
+                                        }
+                                        StyledText {
+                                            text: modelData
+                                            font.pixelSize: 9
+                                            color: Theme.surfaceVariantText
+                                            width: 62
+                                            elide: Text.ElideRight
+                                            horizontalAlignment: Text.AlignHCenter
+                                            anchors.horizontalCenter: parent.horizontalCenter
+                                        }
+                                    }
+
+                                    MouseArea {
+                                        id: appIconCellMouse
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: {
+                                            root._iconSetByCode = true
+                                            iconInput.text = modelData
+                                            root._manualIconPath = ""
+                                            root._iconSetByCode = false
+                                            root.appIconPickerVisible = false
+                                            root.appIconPickerFilter = ""
+                                            appIconPickerSearch.text = ""
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -651,6 +1227,7 @@ PluginSettings {
                         font.pixelSize: Theme.fontSizeMedium
                         clip: true
                         onAccepted: if (nameInput.text.trim()) root.commitManualAdd()
+                        onTextChanged: if (iconInput.text === "") Qt.callLater(root.tryAutoDetectIcon)
                         Text {
                             visible: execInput.text === ""
                             text: "Shell command (e.g. firefox)"
@@ -843,7 +1420,8 @@ PluginSettings {
                         onClicked: {
                             root.addApp({
                                 name: name, icon: icon,
-                                iconPath: iconPath, exec: exec
+                                iconPath: iconPath, exec: exec,
+                                source: "picker"
                             })
                             root.pickerVisible = false
                             pickerSearch.text = ""
@@ -862,7 +1440,7 @@ PluginSettings {
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // ── Create Another Group ──────────────────────────────────────────────
+    // ── Create Another Group ──────────────────────────────────════════════
     // ═══════════════════════════════════════════════════════════════════════
 
     Rectangle { width: parent.width; height: 1; color: Theme.outline; opacity: 0.3 }
@@ -878,115 +1456,149 @@ PluginSettings {
 
     StyledText {
         width: parent.width
-        text: "Creates a new independent copy of this plugin with its own settings. " +
-              "Each group appears as a separate icon in DankBar."
+        text: "Creates a new independent copy of this plugin with its own bar icon, " +
+              "settings, and app list."
         font.pixelSize: Theme.fontSizeSmall
         color: Theme.surfaceVariantText
         wrapMode: Text.WordWrap
     }
 
-    // New group ID field
-    Column {
-        width: parent.width
-        spacing: 4
-
-        StyledText {
-            text: "Group ID  (unique, letters/numbers only, no spaces)"
-            font.pixelSize: Theme.fontSizeSmall
-            color: Theme.surfaceVariantText
-        }
-        StyledRect {
-            width: parent.width
-            height: newIdInput.implicitHeight + Theme.spacingM * 2
-            color: Theme.surfaceContainerHigh
-            radius: Theme.cornerRadius
-
-            TextInput {
-                id: newIdInput
-                anchors {
-                    left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter
-                    leftMargin: Theme.spacingM; rightMargin: Theme.spacingM
-                }
-                color: Theme.surfaceText
-                font.pixelSize: Theme.fontSizeMedium
-                clip: true
-                Text {
-                    visible: newIdInput.text === ""
-                    text: "e.g. mediaApps"
-                    color: Theme.surfaceVariantText
-                    font: newIdInput.font
-                }
-            }
-        }
-    }
-
-    // New group display name field
-    Column {
-        width: parent.width
-        spacing: 4
-
-        StyledText {
-            text: "Group Name  (display label)"
-            font.pixelSize: Theme.fontSizeSmall
-            color: Theme.surfaceVariantText
-        }
-        StyledRect {
-            width: parent.width
-            height: newNameInput.implicitHeight + Theme.spacingM * 2
-            color: Theme.surfaceContainerHigh
-            radius: Theme.cornerRadius
-
-            TextInput {
-                id: newNameInput
-                anchors {
-                    left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter
-                    leftMargin: Theme.spacingM; rightMargin: Theme.spacingM
-                }
-                color: Theme.surfaceText
-                font.pixelSize: Theme.fontSizeMedium
-                clip: true
-                Text {
-                    visible: newNameInput.text === ""
-                    text: "e.g. Media"
-                    color: Theme.surfaceVariantText
-                    font: newNameInput.font
-                }
-            }
-        }
-    }
-
-    // Create button
+    // ── Entry button (default state) ──────────────────────────────────────
     StyledRect {
-        id: createBtn
-        height: createBtnLabel.implicitHeight + Theme.spacingS * 2
-        width: createBtnLabel.implicitWidth + Theme.spacingL * 2
+        visible: !root.createFormVisible && !root.confirmCreateVisible
+        height: newGroupBtnLabel.implicitHeight + Theme.spacingS * 2
+        width: newGroupBtnLabel.implicitWidth + Theme.spacingL * 2
         radius: Theme.cornerRadius
-        color: createMouse.containsMouse ? Theme.primaryContainer || Theme.surfaceContainerHighest : Theme.surfaceContainerHigh
-        visible: !root.confirmCreateVisible
+        color: newGroupBtnMouse.containsMouse ? Theme.surfaceContainerHighest : Theme.surfaceContainerHigh
 
         StyledText {
-            id: createBtnLabel
+            id: newGroupBtnLabel
             anchors.centerIn: parent
-            text: "Create Group"
+            text: "New Group…"
             font.pixelSize: Theme.fontSizeMedium
-            color: createMouse.containsMouse ? Theme.onPrimary || Theme.surface : Theme.primary
+            color: Theme.primary
         }
         MouseArea {
-            id: createMouse
+            id: newGroupBtnMouse
             anchors.fill: parent
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
-            onClicked: {
-                if (newIdInput.text.trim() === "" || newNameInput.text.trim() === "") {
-                    ToastService.showInfo("Missing fields", "Please enter both a Group ID and Group Name")
-                    return
+            onClicked: root.createFormVisible = true
+        }
+    }
+
+    // ── Form (shown after clicking New Group…) ────────────────────────────
+    Column {
+        visible: root.createFormVisible && !root.confirmCreateVisible
+        width: parent.width
+        spacing: Theme.spacingS
+
+        // Group suffix field
+        Column {
+            width: parent.width
+            spacing: 4
+
+            StyledText {
+                text: "Group name"
+                font.pixelSize: Theme.fontSizeSmall
+                color: Theme.surfaceVariantText
+            }
+            StyledRect {
+                width: parent.width
+                height: groupSuffixInput.implicitHeight + Theme.spacingM * 2
+                color: Theme.surfaceContainerHigh
+                radius: Theme.cornerRadius
+
+                TextInput {
+                    id: groupSuffixInput
+                    anchors {
+                        left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter
+                        leftMargin: Theme.spacingM; rightMargin: Theme.spacingM
+                    }
+                    color: Theme.surfaceText
+                    font.pixelSize: Theme.fontSizeMedium
+                    clip: true
+                    Text {
+                        visible: groupSuffixInput.text === ""
+                        text: "e.g. media"
+                        color: Theme.surfaceVariantText
+                        font: groupSuffixInput.font
+                    }
                 }
-                root.confirmCreateVisible = true
+            }
+        }
+
+        // Live preview of generated name + directory
+        StyledText {
+            visible: groupSuffixInput.text.trim() !== ""
+            width: parent.width
+            text: "Will create: " + root._newGroupName + "  →  " + root._newGroupId
+            font.pixelSize: Theme.fontSizeSmall
+            color: Theme.primary
+            wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+        }
+
+        // Action buttons
+        Row {
+            spacing: Theme.spacingS
+            topPadding: Theme.spacingXS
+
+            StyledRect {
+                height: createBtnLabel.implicitHeight + Theme.spacingS * 2
+                width: createBtnLabel.implicitWidth + Theme.spacingL * 2
+                radius: Theme.cornerRadius
+                color: createMouse.containsMouse ? Theme.primaryContainer || Theme.surfaceContainerHighest : Theme.surfaceContainerHigh
+
+                StyledText {
+                    id: createBtnLabel
+                    anchors.centerIn: parent
+                    text: "Create Group"
+                    font.pixelSize: Theme.fontSizeMedium
+                    color: Theme.primary
+                }
+                MouseArea {
+                    id: createMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        if (groupSuffixInput.text.trim() === "") {
+                            ToastService.showInfo("Missing name", "Please enter a group name")
+                            return
+                        }
+                        root.confirmCreateVisible = true
+                    }
+                }
+            }
+
+            StyledRect {
+                height: formCancelLabel.implicitHeight + Theme.spacingS * 2
+                width: formCancelLabel.implicitWidth + Theme.spacingL * 2
+                radius: Theme.cornerRadius
+                color: formCancelMouse.containsMouse ? Theme.surfaceContainerHighest : Theme.surfaceContainerHigh
+
+                StyledText {
+                    id: formCancelLabel
+                    anchors.centerIn: parent
+                    text: "Cancel"
+                    font.pixelSize: Theme.fontSizeMedium
+                    color: Theme.surfaceText
+                }
+                MouseArea {
+                    id: formCancelMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        root.createFormVisible = false
+                        groupSuffixInput.text = ""
+                    }
+                }
             }
         }
     }
 
-    // Confirmation card
+    // ── Confirmation card ─────────────────────────────────────────────────
     StyledRect {
         visible: root.confirmCreateVisible
         width: parent.width
@@ -1004,7 +1616,7 @@ PluginSettings {
 
             StyledText {
                 width: parent.width
-                text: "⚠  Confirm: Create \"" + newNameInput.text + "\""
+                text: "⚠  Confirm: Create \"" + root._newGroupName + "\""
                 font.pixelSize: Theme.fontSizeMedium
                 font.weight: Font.Bold
                 color: Theme.surfaceText
@@ -1013,12 +1625,16 @@ PluginSettings {
 
             StyledText {
                 width: parent.width
-                text: "This will copy this plugin to:\n" +
-                      "~/.config/DankMaterialShell/plugins/" + newIdInput.text + "\n\n" +
-                      "After creation you will need to:\n" +
+                text: "This will create a new independent plugin:\n" +
+                      "  Name:      " + root._newGroupName + "\n" +
+                      "  Directory: ~/.config/DankMaterialShell/plugins/" + root._newGroupId + "\n\n" +
+                      "After creation:\n" +
                       "1. Settings → Plugins → Scan for Plugins\n" +
-                      "2. Enable \"" + newNameInput.text + "\"\n" +
-                      "3. Settings → DankBar → add it to your bar"
+                      "2. Enable \"" + root._newGroupName + "\"\n" +
+                      "3. Settings → DankBar → add it to your bar\n\n" +
+                      "The new group starts empty — configure its bar icon, label, and apps " +
+                      "through Settings → Plugins → " + root._newGroupName + ". " +
+                      "Its settings and app list are completely separate from this group."
                 font.pixelSize: Theme.fontSizeSmall
                 color: Theme.surfaceVariantText
                 wrapMode: Text.WordWrap
@@ -1038,7 +1654,7 @@ PluginSettings {
                         anchors.centerIn: parent
                         text: "Confirm — Create"
                         font.pixelSize: Theme.fontSizeMedium
-                        color: confirmYesMouse.containsMouse ? Theme.onPrimary || Theme.surface : Theme.onPrimary || Theme.surface
+                        color: Theme.onPrimary || Theme.surface
                     }
                     MouseArea {
                         id: confirmYesMouse
@@ -1049,12 +1665,12 @@ PluginSettings {
                             Quickshell.execDetached([
                                 "bash", root.createGroupScript,
                                 root.pluginDir,
-                                newIdInput.text.trim(),
-                                newNameInput.text.trim()
+                                root._newGroupId,
+                                root._newGroupName
                             ])
                             root.confirmCreateVisible = false
-                            newIdInput.text = ""
-                            newNameInput.text = ""
+                            root.createFormVisible = false
+                            groupSuffixInput.text = ""
                             ToastService.showInfo(
                                 "Group created",
                                 "Go to Settings → Plugins → Scan for Plugins to activate it"
@@ -1099,12 +1715,15 @@ PluginSettings {
         root.addApp({
             name: n,
             icon: iconInput.text.trim() || "apps",
-            iconPath: "",
-            exec: e
+            iconPath: root._manualIconPath,
+            exec: e,
+            source: "manual"
         })
         nameInput.text = ""
         iconInput.text = ""
         execInput.text = ""
+        root._manualIconPath = ""
+        root.appIconPickerVisible = false
         nameInput.forceActiveFocus()
         // Form stays open so the user can add another app immediately
     }

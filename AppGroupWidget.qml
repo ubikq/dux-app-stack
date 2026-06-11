@@ -8,7 +8,7 @@ import qs.Modules.Plugins
 PluginComponent {
     id: root
 
-    property string groupName: pluginData.groupName || "App Group"
+    property string groupName: pluginData.groupName || "App Stack"
     property string groupIcon: pluginData.groupIcon || "apps"
     property bool showLabel: pluginData.showLabel || false
 
@@ -96,7 +96,8 @@ PluginComponent {
                 if (liveApps.length >= 10) return
                 var newList = liveApps.slice()
                 newList.push({ name: appData.name, icon: appData.icon || "apps",
-                               iconPath: appData.iconPath || "", exec: appData.exec })
+                               iconPath: appData.iconPath || "", exec: appData.exec,
+                               source: "picker" })
                 liveApps = newList
                 saveApps(newList)
             }

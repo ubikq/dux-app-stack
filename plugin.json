@@ -1,7 +1,7 @@
 {
-  "id": "appGroup",
-  "name": "App Group",
-  "description": "A popout launcher that groups apps behind a single bar icon. Copy this folder and change the id for multiple independent groups.",
+  "id": "appStack_default",
+  "name": "App Stack - Default",
+  "description": "A popout launcher that groups apps behind a single bar icon. Use Settings → Plugins → App Stack - Default to create additional independent groups.",
   "version": "1.0.0",
   "author": "Pieter van Heerden",
   "icon": "apps",

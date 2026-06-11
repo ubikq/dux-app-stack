@@ -1,14 +1,14 @@
-# App Group — DMS Bar Widget Plugin
+# App Stack — DMS Bar Widget Plugin
 
 A [Dank Material Shell](https://danklinux.com) bar widget that groups related apps behind a single icon. Click the icon to open a popout grid of app shortcuts. Create additional groups directly from the settings panel — each group is an independent bar icon with its own app list.
 
-![Plugin type: widget](https://img.shields.io/badge/type-widget-blue) ![DMS](https://img.shields.io/badge/DMS-1.4%2B-green)
+![Plugin type: widget](https://img.shields.io/badge/type-widget-blue) ![DMS](https://img.shields.io/badge/DMS-1.4%2B-green) ![License: GPL v2](https://img.shields.io/badge/License-GPL%20v2-blue.svg)
 
 ---
 
 ## Overview
 
-The built-in Apps Dock widget in DMS shows a single shared list of pinned apps across all instances. App Group solves this by giving each copy of the plugin its own independent app list, so you can have a "Dev Tools" icon and a "Media" icon on your bar that each open their own curated set of shortcuts.
+The built-in Apps Dock widget in DMS shows a single shared list of pinned apps across all instances. App Stack solves this by giving each copy of the plugin its own independent app list, so you can have a "Dev Tools" icon and a "Media" icon on your bar that each open their own curated set of shortcuts.
 
 ```
 DankBar:  [Dev Tools ▾]  [Media ▾]  [clock]  [battery] ...
@@ -50,30 +50,40 @@ sudo apt install python3
 
 ---
 
+## Getting the plugin
+
+```bash
+git clone https://github.com/ubikq/dms-app-stack.git
+```
+
+---
+
 ## Installation (first group)
 
 ```bash
 # Copy the plugin directory into the DMS plugins folder
-cp -r /path/to/DMS_stacky ~/.config/DankMaterialShell/plugins/AppGroup
+cp -r dms-app-stack ~/.config/DankMaterialShell/plugins/appStack_default
 
 # Activate
-# Settings → Plugins → Scan for Plugins → toggle "App Group" on → dms restart
+# Settings → Plugins → Scan for Plugins → toggle "App Stack - Default" on → dms restart
 
 # Add to your bar
-# Settings → DankBar → add "App Group" to a section
+# Settings → DankBar → add "App Stack - Default" to a section
 ```
+
+No further editing is required — the plugin ID is already set to `appStack_default`.
 
 ---
 
 ## Configuration
 
-Open **Settings → Plugins → App Group** to configure everything — no file editing or JSON required.
+Open **Settings → Plugins → App Stack - Default** to configure everything — no file editing or JSON required.
 
 ### Group settings
 
 | Setting | Description | Default |
 |---|---|---|
-| **Group Label** | Name shown in the popout header | `App Group` |
+| **Group Label** | Name shown in the popout header | `App Stack` |
 | **Bar Icon** | [Material icon](https://fonts.google.com/icons) name shown in DankBar | `apps` |
 | **Show label in bar** | Display the group name next to the icon | off |
 
@@ -119,15 +129,20 @@ Browse at [fonts.google.com/icons](https://fonts.google.com/icons). Use the snak
 
 Additional groups are created directly from the settings panel — no manual file copying required.
 
-1. Open **Settings → Plugins → App Group**
+1. Open **Settings → Plugins → App Stack - Default**
 2. Scroll to **Create Another Group** at the bottom
-3. Enter a unique **Group ID** (letters/numbers only, e.g. `mediaApps`) and a **Group Name** (e.g. `Media`)
-4. Click **Create Group** and read the confirmation carefully
-5. Click **Confirm — Create**
-6. Go to **Settings → Plugins → Scan for Plugins** → enable the new group → **dms restart**
-7. Add the new group to your bar via **Settings → DankBar**
+3. Click **New Group…**
+4. Enter a short **group name** (e.g. `media`). The plugin name and directory are generated automatically:
+   - Plugin name: `App Stack - media`
+   - Directory: `~/.config/DankMaterialShell/plugins/appStack_media`
+5. Click **Create Group** and read the confirmation carefully
+6. Click **Confirm — Create**
+7. Go to **Settings → Plugins → Scan for Plugins** → enable **App Stack - media** → **dms restart**
+8. Add the new group to your bar via **Settings → DankBar**
 
-Each group is fully independent — its own settings, its own app list, its own bar icon position.
+Each group is fully independent — its own settings, its own app list, its own bar icon position. Configure the new group's icon, label, and apps through **Settings → Plugins → App Stack - media** (not the Default group).
+
+> **Naming convention:** All App Stack instances share the `appStack_` prefix so they sort together in the plugins view and filesystem. Spaces in the group name are replaced with underscores in the directory name (e.g. `Dev Tools` → `appStack_Dev_Tools`).
 
 > **Technical note:** DMS requires each bar widget to be a separate plugin instance with a unique ID. The Create flow copies this plugin directory and patches the ID automatically. The `plugin.json` `id` and `AppGroupSettings.qml` `pluginId` must always match within a given copy — the create script handles this for you.
 
@@ -136,11 +151,11 @@ Each group is fully independent — its own settings, its own app list, its own 
 If you prefer to create a group manually or need to troubleshoot:
 
 ```bash
-cp -r ~/.config/DankMaterialShell/plugins/AppGroup \
-      ~/.config/DankMaterialShell/plugins/MediaApps
+cp -r ~/.config/DankMaterialShell/plugins/appStack_default \
+      ~/.config/DankMaterialShell/plugins/appStack_media
 
-# Edit MediaApps/plugin.json:          "id": "mediaApps", "name": "Media"
-# Edit MediaApps/AppGroupSettings.qml: pluginId: "mediaApps"
+# Edit appStack_media/plugin.json:          "id": "appStack_media", "name": "App Stack - media"
+# Edit appStack_media/AppGroupSettings.qml: pluginId: "appStack_media"
 
 # Then: Settings → Plugins → Scan → enable → dms restart → add to DankBar
 ```
@@ -152,8 +167,8 @@ cp -r ~/.config/DankMaterialShell/plugins/AppGroup \
 Hot-reload after editing QML:
 
 ```bash
-dms ipc call plugins reload appGroup
-# Replace appGroup with the id of the group you're editing
+dms ipc call plugins reload appStack_default
+# Replace appStack_default with the id of the group you're editing
 ```
 
 View QML errors:
@@ -165,5 +180,11 @@ journalctl --user -u dank-material-shell -f
 Test the app scanner script directly:
 
 ```bash
-python3 ~/.config/DankMaterialShell/plugins/AppGroup/scripts/list-apps.py | python3 -m json.tool | head -40
+python3 ~/.config/DankMaterialShell/plugins/appStack_default/scripts/list-apps.py | python3 -m json.tool | head -40
 ```
+
+---
+
+## License
+
+This project is licensed under the [GNU General Public License v2.0](LICENSE).
