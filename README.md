@@ -10,20 +10,7 @@ A [Dank Material Shell](https://danklinux.com) bar widget that groups related ap
 
 The built-in Apps Dock widget in DMS shows a single shared list of pinned apps across all instances. App Stack solves this by giving each copy of the plugin its own independent app list, so you can have a "Dev Tools" icon and a "Media" icon on your bar that each open their own curated set of shortcuts.
 
-```
-DankBar:  [Dev Tools ▾]  [Media ▾]  [clock]  [battery] ...
-                │
-                ▼ popout
-          ┌─────────────────┐
-          │  Dev Tools      │
-          │ ┌───┐ ┌───┐    │
-          │ │Zed│ │Post│   │
-          │ └───┘ └───┘    │
-          │ ┌───┐ ┌───┐    │
-          │ │DB │ │Term│   │
-          │ └───┘ └───┘    │
-          └─────────────────┘
-```
+![App Stack popout](docs/screenshot.webp)
 
 ---
 
@@ -107,20 +94,11 @@ Up to **10 apps** per group. A recommendation to create another group is shown w
 
 Browse at [fonts.google.com/icons](https://fonts.google.com/icons). Use the snake_case name shown under each icon (e.g. `open_in_new`, `folder_open`, `music_note`).
 
-### Common manual commands
+### Example manual commands
 
 | App | Command |
 |---|---|
 | Firefox | `firefox` |
-| Chromium | `chromium` |
-| VS Code | `code` |
-| Zed | `zed` |
-| Kitty | `kitty` |
-| Alacritty | `alacritty` |
-| Nautilus | `nautilus` |
-| Thunar | `thunar` |
-| Spotify | `spotify` |
-| VLC | `vlc` |
 | Flatpak app | `flatpak run com.example.App` |
 
 ---
