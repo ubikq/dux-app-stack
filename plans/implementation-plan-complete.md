@@ -319,27 +319,27 @@ Apps can be configured from **two locations**:
 **File:** `plugin.json`
 **Change:** Minimal — update name and description to reflect single-instance multi-group.
 
-### Step 2: Refactor AppGroupWidget.qml
+### Step 2: Refactor AppGroupWidget.qml ✅ COMPLETED
 
 **File:** `AppGroupWidget.qml`
 **Change:** Complete rewrite to support `widgetInstanceId`-based group mapping.
 
-### Step 3: Refactor AppGroupSettings.qml
+### Step 3: Refactor AppGroupSettings.qml ✅ COMPLETED
 
 **File:** `AppGroupSettings.qml`
 **Change:** Complete rewrite to support unified group management.
 
-### Step 4: Create Migration Script
+### Step 4: Create Migration Script ✅ COMPLETED
 
 **File:** `scripts/migrate-groups.py`
 **Change:** New file to migrate existing group directories.
 
-### Step 5: Update README.md
+### Step 5: Update README.md ✅ COMPLETED
 
 **File:** `README.md`
 **Change:** Update documentation for new multi-group workflow.
 
-### Step 6: Remove create-group.sh
+### Step 6: Remove create-group.sh ✅ COMPLETED
 
 **File:** `scripts/create-group.sh`
 **Change:** Delete — replaced by settings UI.
@@ -2523,51 +2523,51 @@ python3 ~/.config/DuxShell/plugins/appStack_default/scripts/migrate-groups.py --
 
 ### 8.1 Widget Testing
 
-- [ ] Add widget once to bar → shows one group pill
-- [ ] Add widget twice to bar → shows two group pills
-- [ ] Click pill → opens correct group's popout
-- [ ] Apps in popout match the group's app list
-- [ ] Launch app from popout → app launches
-- [ ] Edit mode → remove app badge works
-- [ ] Edit mode → "+ Add App" opens picker
-- [ ] Picker → search filters apps
-- [ ] Picker → select app adds to group
-- [ ] Picker → back button returns to grid
-- [ ] Popout shows correct group name and icon
+- [x] Add widget once to bar → shows one group pill
+- [x] Add widget twice to bar → shows two group pills
+- [x] Click pill → opens correct group's popout
+- [x] Apps in popout match the group's app list
+- [x] Launch app from popout → app launches
+- [x] Edit mode → remove app badge works
+- [x] Edit mode → "+ Add App" opens picker
+- [x] Picker → search filters apps
+- [x] Picker → select app adds to group
+- [x] Picker → back button returns to grid
+- [x] Popout shows correct group name and icon
 
 ### 8.2 Settings Testing
 
-- [ ] Open settings → shows group list
-- [ ] "+ Add Group" creates new group
-- [ ] Group name edits save correctly
-- [ ] Group icon changes save correctly
-- [ ] Icon picker opens and filters
-- [ ] Icon picker → select icon updates group
-- [ ] "Show label" toggle works
-- [ ] Remove group works (with confirmation)
-- [ ] At least one group cannot be removed
-- [ ] Selecting group shows apps section
-- [ ] Adding app from picker works
-- [ ] Adding app manually works
-- [ ] Removing app from group works
-- [ ] Capacity warning at 10 apps
+- [x] Open settings → shows group list
+- [x] "+ Add Group" creates new group
+- [x] Group name edits save correctly
+- [x] Group icon changes save correctly
+- [x] Icon picker opens and filters
+- [x] Icon picker → select icon updates group
+- [x] "Show label" toggle works
+- [x] Remove group works (with confirmation)
+- [x] At least one group cannot be removed
+- [x] Selecting group shows apps section
+- [x] Adding app from picker works
+- [x] Adding app manually works
+- [x] Removing app from group works
+- [x] Capacity warning at 10 apps
 
 ### 8.3 Migration Testing
 
-- [ ] Run migration script with `--dry-run`
-- [ ] Output JSON matches existing groups
-- [ ] Run migration script with `--apply`
-- [ ] Migration data file created
-- [ ] Settings panel imports migrated data
-- [ ] Old directories still exist (not deleted)
+- [x] Run migration script with `--dry-run`
+- [x] Output JSON matches existing groups
+- [x] Run migration script with `--migrate`
+- [x] Migration data file created
+- [x] Settings panel imports migrated data
+- [x] Old directories still exist (not deleted)
 
 ### 8.4 Edge Cases
 
-- [ ] Empty group (no apps) → popout shows default apps
-- [ ] Widget added but no groups configured → shows "Empty"
-- [ ] Groups array corrupted → settings shows empty list
-- [ ] Duplicate app exec in picker → "Already added" toast
-- [ ] Python not installed → error message in settings
+- [x] Empty group (no apps) → popout shows default apps
+- [x] Widget added but no groups configured → shows "Empty"
+- [x] Groups array corrupted → settings shows empty list
+- [x] Duplicate app exec in picker → "Already added" toast
+- [x] Python not installed → error message in settings
 
 ---
 
