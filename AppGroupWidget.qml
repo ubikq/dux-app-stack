@@ -5,16 +5,46 @@ import qs.Common
 import qs.Widgets
 import qs.Modules.Plugins
 
+// AppGroupWidget — Multi-group bar widget for App Stack plugin.
+//
+// Data shape: pluginData.groups is a JSON array of group objects:
+// [
+//   { "id": "group_0", "name": "Dev", "icon": "code", "showLabel": true,
+//     "apps": [{ "name": "...", "icon": "...", "iconPath": "...", "exec": "...", "source": "..." }] },
+//   ...
+// ]
+//
+// widgetInstanceId (auto-injected by Dux Shell) maps each bar slot to a
+// groups array index. Instance 0 → groups[0], instance 1 → groups[1], etc.
+
 PluginComponent {
     id: root
 
-    property string groupName: pluginData.groupName || "App Stack"
-    property string groupIcon: pluginData.groupIcon || "apps"
-    property bool showLabel: pluginData.showLabel || false
+    // ── Multi-group support via widgetInstanceId ─────────────────────────
+    // widgetInstanceId is auto-injected by Dux Shell. Each time the user
+    // adds this widget to the bar, Dux Shell assigns a sequential integer
+    // starting from 0. We map that index to groups[widgetInstanceId].
 
     readonly property string listAppsScript:
         Qt.resolvedUrl("./scripts/list-apps.py").toString().replace(/^file:\/\//, "")
 
+    // Current group resolved from widgetInstanceId
+    property var currentGroup: {
+        if (!pluginData.groups || !(pluginData.groups instanceof Array))
+            return null
+        var idx = widgetInstanceId
+        if (idx < 0 || idx >= pluginData.groups.length)
+            return null
+        return pluginData.groups[idx]
+    }
+
+    // Derived properties for convenience (null-safe)
+    property string _groupName: currentGroup ? (currentGroup.name || "Group") : "Empty"
+    property string _groupIcon: currentGroup ? (currentGroup.icon || "apps") : "apps"
+    property bool _showLabel: currentGroup ? (currentGroup.showLabel || false) : false
+    property var _groupApps: currentGroup ? (currentGroup.apps || []) : []
+
+    // Default apps shown when group has none configured
     property var defaultApps: [
         { "name": "Firefox",  "icon": "language",  "iconPath": "", "exec": "firefox"  },
         { "name": "Terminal", "icon": "terminal",  "iconPath": "", "exec": "kitty"    },
@@ -22,20 +52,25 @@ PluginComponent {
         { "name": "Settings", "icon": "settings",  "iconPath": "", "exec": "gnome-control-center" }
     ]
 
+    // ── Bar Pills ────────────────────────────────────────────────────────
+    // Show a pill only if we have a valid group. Empty/missing groups
+    // render nothing (they should not be added to the bar).
+
     horizontalBarPill: Component {
+        visible: root.currentGroup !== null
         Row {
             spacing: Theme.spacingS
 
             DankIcon {
-                name: root.groupIcon
+                name: root._groupIcon
                 size: Theme.iconSize
                 color: Theme.primary
                 anchors.verticalCenter: parent.verticalCenter
             }
 
             StyledText {
-                visible: root.showLabel
-                text: root.groupName
+                visible: root._showLabel
+                text: root._groupName
                 font.pixelSize: Theme.fontSizeMedium
                 color: Theme.surfaceText
                 anchors.verticalCenter: parent.verticalCenter
@@ -44,22 +79,25 @@ PluginComponent {
     }
 
     verticalBarPill: Component {
+        visible: root.currentGroup !== null
         DankIcon {
-            name: root.groupIcon
+            name: root._groupIcon
             size: Theme.iconSize
             color: Theme.primary
             anchors.horizontalCenter: parent.horizontalCenter
         }
     }
 
+    // ── Popout ───────────────────────────────────────────────────────────
     popoutContent: Component {
         PopoutComponent {
             id: popout
-            headerText: root.groupName
+            headerText: root._groupName
+            detailsText: root.currentGroup ? (root._groupApps.length + " apps") : "No group assigned"
             showCloseButton: true
 
-            // ── State ──────────────────────────────────────────────────────
-            property var liveApps: root.defaultApps
+            // ── State ──────────────────────────────────────────────────
+            property var liveApps: []
             property bool editMode: false
             property bool pickerMode: false
             property bool pickerLoading: false
@@ -68,22 +106,22 @@ PluginComponent {
             ListModel { id: pickerModel }
             ListModel { id: filteredPickerModel }
 
-            // ── Initialise app list ────────────────────────────────────────
+            // ── Initialise app list ────────────────────────────────────
             Component.onCompleted: {
-                var raw = pluginData.appsData
-                if (raw === undefined || raw === null || raw === "") { liveApps = root.defaultApps; return }
-                try {
-                    var arr = JSON.parse(raw)
-                    liveApps = Array.isArray(arr) ? arr : root.defaultApps
-                } catch(e) {
+                if (root.currentGroup && root.currentGroup.apps && root.currentGroup.apps.length > 0) {
+                    liveApps = root.currentGroup.apps
+                } else {
                     liveApps = root.defaultApps
                 }
             }
 
-            // ── App list mutations ─────────────────────────────────────────
+            // ── App list mutations ─────────────────────────────────────
+            // Save apps array back to the groups array in pluginData.
             function saveApps(list) {
-                if (root.pluginService?.savePluginData)
-                    root.pluginService.savePluginData(root.pluginId, "appsData", JSON.stringify(list))
+                if (!root.currentGroup || !root.pluginService) return
+                var groups = pluginData.groups.slice()
+                groups[widgetInstanceId] = Object.assign({}, root.currentGroup, { apps: list })
+                root.pluginService.savePluginData(root.pluginId, "groups", JSON.stringify(groups))
             }
 
             function removeApp(idx) {
@@ -95,26 +133,31 @@ PluginComponent {
             function addPickerApp(appData) {
                 if (liveApps.length >= 10) return
                 var newList = liveApps.slice()
-                newList.push({ name: appData.name, icon: appData.icon || "apps",
-                               iconPath: appData.iconPath || "", exec: appData.exec,
-                               source: "picker" })
+                newList.push({
+                    name: appData.name,
+                    icon: appData.icon || "apps",
+                    iconPath: appData.iconPath || "",
+                    exec: appData.exec,
+                    source: "picker"
+                })
                 liveApps = newList
                 saveApps(newList)
             }
 
-            // ── Picker filter ──────────────────────────────────────────────
+            // ── Picker filter ──────────────────────────────────────────
             function filterPicker() {
                 filteredPickerModel.clear()
                 var f = pickerFilter.toLowerCase().trim()
                 for (var i = 0; i < pickerModel.count; i++) {
                     var a = pickerModel.get(i)
-                    if (!f || a.name.toLowerCase().includes(f)) filteredPickerModel.append(a)
+                    if (!f || a.name.toLowerCase().includes(f))
+                        filteredPickerModel.append(a)
                 }
             }
 
             onPickerFilterChanged: filterPicker()
 
-            // ── System app scanner ─────────────────────────────────────────
+            // ── System app scanner ─────────────────────────────────────
             Process {
                 id: widgetScanner
                 running: false
@@ -125,7 +168,8 @@ PluginComponent {
                         try {
                             var apps = JSON.parse(line)
                             pickerModel.clear()
-                            for (var i = 0; i < apps.length; i++) pickerModel.append(apps[i])
+                            for (var i = 0; i < apps.length; i++)
+                                pickerModel.append(apps[i])
                             popout.filterPicker()
                         } catch(e) {}
                         popout.pickerLoading = false
@@ -136,19 +180,19 @@ PluginComponent {
                 }
             }
 
-            // ── Layout ─────────────────────────────────────────────────────
+            // ── Layout ─────────────────────────────────────────────────
             Column {
                 width: parent.width
                 spacing: 0
 
-                // ── Control strip ──────────────────────────────────────────
+                // ── Control strip ──────────────────────────────────────
                 Item {
                     width: parent.width
                     height: 36
 
                     StyledText {
                         visible: popout.editMode && !popout.pickerMode
-                        text: "Tap ✕ to remove"
+                        text: "Tap \u2715 to remove"
                         font.pixelSize: Theme.fontSizeSmall
                         color: Theme.surfaceVariantText
                         anchors { left: parent.left; verticalCenter: parent.verticalCenter }
@@ -156,7 +200,6 @@ PluginComponent {
 
                     // Done button (edit mode)
                     StyledRect {
-                        id: doneBtn
                         visible: popout.editMode
                         anchors { right: parent.right; verticalCenter: parent.verticalCenter }
                         height: doneBtnLabel.implicitHeight + Theme.spacingXS * 2
@@ -208,7 +251,7 @@ PluginComponent {
                     }
                 }
 
-                // ── App grid (normal + edit mode) ──────────────────────────
+                // ── App grid (normal + edit mode) ──────────────────────
                 Flow {
                     visible: !popout.pickerMode
                     width: parent.width
@@ -316,7 +359,7 @@ PluginComponent {
                         }
                     }
 
-                    // "+" add tile
+                    // "+" add tile (shown when below limit and in edit mode)
                     Item {
                         visible: popout.editMode && popout.liveApps.length < 10
                         width: 80
@@ -367,7 +410,7 @@ PluginComponent {
                     }
                 }
 
-                // ── Picker view ────────────────────────────────────────────
+                // ── Picker view ────────────────────────────────────────
                 Column {
                     visible: popout.pickerMode
                     width: parent.width
@@ -415,7 +458,7 @@ PluginComponent {
                     // Scanning indicator
                     StyledText {
                         visible: popout.pickerLoading
-                        text: "Scanning installed apps…"
+                        text: "Scanning installed apps\u2026"
                         font.pixelSize: Theme.fontSizeSmall
                         color: Theme.surfaceVariantText
                     }
@@ -441,7 +484,7 @@ PluginComponent {
                             onTextChanged: popout.pickerFilter = text
                             Text {
                                 visible: pickerSearchInput.text === ""
-                                text: "Search apps…"
+                                text: "Search apps\u2026"
                                 color: Theme.surfaceVariantText
                                 font: pickerSearchInput.font
                             }

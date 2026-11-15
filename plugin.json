@@ -1,8 +1,8 @@
 {
   "id": "appStack_default",
-  "name": "App Stack - Default",
-  "description": "A popout launcher that groups apps behind a single bar icon. Use Settings → Plugins → App Stack - Default to create additional independent groups.",
-  "version": "1.0.0",
+  "name": "App Stack",
+  "description": "Multi-group app launcher for Dux Shell bar. Add this widget multiple times to create groups — each bar slot gets its own group.",
+  "version": "2.0.0",
   "author": "Pieter van Heerden",
   "icon": "apps",
   "type": "widget",
