@@ -6,6 +6,28 @@ A [Dux Shell](https://duxlabs.dev) bar widget that manages multiple independent 
 
 ---
 
+## Contents
+
+- [Overview](#overview)
+- [Requirements](#requirements)
+- [Getting the plugin](#getting-the-plugin)
+- [Installation](#installation)
+  - [Activating the plugin](#activating-the-plugin)
+  - [Adding to your bar](#adding-to-your-bar)
+- [Configuration](#configuration)
+  - [Managing groups](#managing-groups)
+  - [Managing apps](#managing-apps)
+  - [Finding material icon names](#finding-material-icon-names)
+  - [Bar placement](#bar-placement)
+- [Using the bar widget](#using-the-bar-widget)
+- [Migration from legacy groups](#migration-from-legacy-groups)
+- [Development](#development)
+- [Data model](#data-model)
+- [Disclaimer](#disclaimer)
+- [License](#license)
+
+---
+
 ## Overview
 
 The built-in Apps Dock widget in Dux Shell shows a single shared list of pinned apps across all instances. App Stack solves this by letting you create multiple app groups, each exposed as a **variant**. When you add the widget to the bar, Dux Shell asks which group to attach — so each bar slot gets its own icon, label, and curated set of app shortcuts.
@@ -19,9 +41,9 @@ The built-in Apps Dock widget in Dux Shell shows a single shared list of pinned 
 | Requirement | Purpose |
 |---|---|
 | Dux Shell (or Dank Material Shell) | Plugin host |
-| **Python 3** *(optional)* | **"Choose from Installed Apps"** picker only |
+| **Python 3** *(optional)* | **"+ Installed Apps"** picker only |
 
-Python 3 is **not required** for the core plugin. The manual "Add App" form (Name / Icon / Command) works without it. If Python is missing, clicking "Choose from Installed Apps" will show an error message with install instructions.
+Python 3 is **not required** for the core plugin. The manual "Add Custom App" form (Name / Command / Icon) works without it. If Python is missing, clicking "+ Installed Apps" will show an error message with install instructions.
 
 Install Python 3 if you want the app picker:
 
@@ -76,7 +98,7 @@ cp -r scripts/          ~/.config/DankMaterialShell/plugins/appStack_default/
 ### Adding to your bar
 
 ```
-Settings → DankBar → add "App Stack - <group name>" widget to a section
+Settings → Bar → Bar widgets → add "App Stack - <group name>" widget to a section
 ```
 
 Each group appears as its own entry in the widget list (e.g. `App Stack - Development`). Pick the group you want for that bar slot. To change it later, remove the widget and add the desired group instead.
@@ -97,31 +119,45 @@ The **Groups** section at the top shows all configured groups. Click a group to 
 | **Group Icon** | [Material icon](https://fonts.google.com/icons) name shown in DankBar | `apps` |
 | **Show label in bar** | Display the group name next to the icon | off |
 
-To remove a group, click the trash icon next to its name in the group list.
+To remove a group, click **Delete** next to its name in the group list, then confirm. A group that is still linked to a bar widget cannot be deleted — remove that widget from the bar first (see [Using the bar widget](#using-the-bar-widget)).
 
 ### Managing apps
 
-Select a group to see its **Apps** section. Each group supports up to **10 apps**.
+Select a group to see its **Apps** section. Each group supports up to **10 apps**; a warning appears when the limit is reached.
 
-**Add App (manual)** — fill in Name, Icon, and Command, then click **Add App**:
+**+ Add Custom App** — opens a manual form. Fill in the fields, then click **Add App**:
 
 | Field | Description |
 |---|---|
 | **Name** | Display label shown below the icon in the popout |
+| **Command** | Shell command to launch the app (e.g. `firefox` or `/usr/bin/app --flag`) |
 | **Icon** | [Material icon](https://fonts.google.com/icons) name (e.g. `code`, `movie`) |
-| **Command** | Shell command to launch the app (e.g. `firefox`) |
 
-**Choose from Installed Apps** — opens a searchable list of all applications found in your system's `.desktop` files (including Flatpak). Selecting an app fills in all fields automatically and shows the app's real icon in the popout.
+**+ Installed Apps** — opens a searchable list of all applications found in your system's `.desktop` files (including Flatpak). Selecting an app adds it to the group immediately with its real icon.
 
-Remove any app with the × button. Edit manual apps by clicking the pencil icon.
+Remove any app with the × button. Edit custom apps by clicking the pencil icon.
 
 ### Finding material icon names
 
-Browse at [fonts.google.com/icons](https://fonts.google.com/icons). Use the snake_case name shown under each icon (e.g. `open_in_new`, `folder_open`, `music_note`).
+Click **Pick** next to the Icon field to open an inline, searchable grid of common Material icons. You can also browse the full set at [fonts.google.com/icons](https://fonts.google.com/icons) and use the snake_case name shown under each icon (e.g. `open_in_new`, `folder_open`, `music_note`).
 
 ### Bar placement
 
 Each group is a plugin **variant**, so you can place the widget on **multiple bars** or in **different sections** of the same bar — one entry per group. Each bar slot is bound to the group you picked when adding it, and edits made in the popout are saved to that group's variant.
+
+---
+
+## Using the bar widget
+
+Clicking a group's bar icon opens a popout showing that group's apps as a grid. Click any app to launch it.
+
+The popout also lets you manage the group's apps directly:
+
+- Click the **edit** (pencil) icon to enter edit mode.
+- In edit mode, click the **×** badge on an app to remove it, or the **+ Add App** tile to open the installed-apps picker and add another app.
+- Click **Done** to leave edit mode.
+
+Changes made in the popout are saved to the group's variant immediately. Group name, icon, and label are edited from the settings panel instead.
 
 ---
 
@@ -140,8 +176,10 @@ python3 ~/.config/DankMaterialShell/plugins/appStack_default/scripts/migrate-gro
 The migration script:
 1. Scans for legacy `appStack_*` directories
 2. Extracts group names, icons, and app lists
-3. Creates a unified `groups` array in `data.json`
+3. Writes a unified `groups` array to `data.json`
 4. Prints cleanup instructions for removing old directories
+
+> **Note:** The script writes a legacy `groups` array. On first open, the settings panel converts each entry into a DMS **variant** automatically (see [Data model](#data-model)).
 
 > **Backup your configuration before migrating:**
 > ```bash
@@ -189,8 +227,8 @@ Each group is stored as a DMS **variant** under the `variants` key in `pluginDat
       "icon": "code",
       "showLabel": true,
       "apps": [
-        { "name": "VS Code", "icon": "visual-studio-code", "exec": "code", "source": "manual" },
-        { "name": "Terminal", "icon": "terminal", "exec": "kitty", "source": "picker" }
+        { "name": "VS Code", "icon": "visual-studio-code", "iconPath": "", "exec": "code", "source": "manual" },
+        { "name": "Terminal", "icon": "terminal", "iconPath": "/usr/share/icons/.../terminal.svg", "exec": "kitty", "source": "picker" }
       ]
     },
     {
@@ -199,7 +237,7 @@ Each group is stored as a DMS **variant** under the `variants` key in `pluginDat
       "icon": "movie",
       "showLabel": false,
       "apps": [
-        { "name": "Firefox", "icon": "language", "exec": "firefox", "source": "manual" }
+        { "name": "Firefox", "icon": "language", "iconPath": "", "exec": "firefox", "source": "manual" }
       ]
     }
   ]
