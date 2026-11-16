@@ -61,6 +61,7 @@ PluginSettings {
     }
 
     property int selectedGroupIndex: -1
+    property int pendingDeleteIndex: -1
     property bool pickerVisible: false
     property bool pickerLoading: false
     property bool pickerFailed: false
@@ -368,6 +369,13 @@ PluginSettings {
                             radius: Theme.cornerRadius
                         }
 
+                        // Select area declared BEFORE the row so the delete
+                        // button (inside the row) stays on top and clickable.
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: root.selectedGroupIndex = index
+                        }
+
                         Row {
                             anchors {
                                 left: parent.left; right: parent.right
@@ -399,7 +407,7 @@ PluginSettings {
                                     anchors.fill: parent
                                     hoverEnabled: true
                                     cursorShape: Qt.PointingHandCursor
-                                    onClicked: root.removeGroup(index)
+                                    onClicked: root.pendingDeleteIndex = index
                                     DankIcon {
                                         name: "delete"
                                         size: Theme.iconSize
@@ -408,11 +416,6 @@ PluginSettings {
                                     }
                                 }
                             }
-                        }
-
-                        MouseArea {
-                            anchors.fill: parent
-                            onClicked: root.selectedGroupIndex = index
                         }
                     }
                 }
@@ -425,6 +428,93 @@ PluginSettings {
                     color: Theme.surfaceVariantText
                     horizontalAlignment: Text.AlignHCenter
                     width: parent.width
+                }
+            }
+        }
+
+        // ── Delete confirmation ───────────────────────────────────────────
+        StyledRect {
+            width: parent.width
+            height: deleteConfirmColumn.implicitHeight + Theme.spacingM * 2
+            radius: Theme.cornerRadius
+            color: Theme.withAlpha ? Theme.withAlpha(Theme.error || Theme.primary, 0.12) : Theme.surfaceContainerHigh
+            visible: root.pendingDeleteIndex >= 0 && root.pendingDeleteIndex < root.groupsArray.length
+
+            Column {
+                id: deleteConfirmColumn
+                anchors {
+                    left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter
+                    leftMargin: Theme.spacingM; rightMargin: Theme.spacingM
+                }
+                spacing: Theme.spacingS
+
+                StyledText {
+                    width: parent.width
+                    text: "Delete group \"" + (root.pendingDeleteIndex >= 0 && root.pendingDeleteIndex < root.groupsArray.length ? (root.groupsArray[root.pendingDeleteIndex].name || "Unnamed") : "") + "\"?"
+                    font.pixelSize: Theme.fontSizeMedium
+                    color: Theme.surfaceText
+                    wrapMode: Text.WordWrap
+                }
+
+                StyledText {
+                    width: parent.width
+                    text: "Any bar widget using this group will also be removed from the bar."
+                    font.pixelSize: Theme.fontSizeSmall
+                    color: Theme.surfaceVariantText
+                    wrapMode: Text.WordWrap
+                }
+
+                Row {
+                    spacing: Theme.spacingS
+
+                    StyledRect {
+                        height: cancelDeleteLabel.implicitHeight + Theme.spacingXS * 2
+                        width: cancelDeleteLabel.implicitWidth + Theme.spacingM * 2
+                        radius: Theme.cornerRadius
+                        color: cancelDeleteMouse.containsMouse ? Theme.surfaceContainerHighest : Theme.surfaceContainerHigh
+
+                        StyledText {
+                            id: cancelDeleteLabel
+                            anchors.centerIn: parent
+                            text: "Cancel"
+                            font.pixelSize: Theme.fontSizeSmall
+                            color: Theme.surfaceText
+                        }
+                        MouseArea {
+                            id: cancelDeleteMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.pendingDeleteIndex = -1
+                        }
+                    }
+
+                    StyledRect {
+                        height: confirmDeleteLabel.implicitHeight + Theme.spacingXS * 2
+                        width: confirmDeleteLabel.implicitWidth + Theme.spacingM * 2
+                        radius: Theme.cornerRadius
+                        color: confirmDeleteMouse.containsMouse
+                               ? Theme.error
+                               : (Theme.withAlpha ? Theme.withAlpha(Theme.error || Theme.primary, 0.2) : Theme.surfaceContainerHigh)
+
+                        StyledText {
+                            id: confirmDeleteLabel
+                            anchors.centerIn: parent
+                            text: "Delete"
+                            font.pixelSize: Theme.fontSizeSmall
+                            color: confirmDeleteMouse.containsMouse ? Theme.surface : (Theme.error || Theme.surfaceText)
+                        }
+                        MouseArea {
+                            id: confirmDeleteMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                root.removeGroup(root.pendingDeleteIndex)
+                                root.pendingDeleteIndex = -1
+                            }
+                        }
+                    }
                 }
             }
         }

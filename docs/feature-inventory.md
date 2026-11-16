@@ -56,6 +56,12 @@ Variant (group) config shape:
 | G11 | "Editing: <group>" header | `StyledText` above the group config | ✅ |
 | G12 | Remember last-edited group | `saveState`/`loadState("selectedGroupIndex")` | ✅ |
 | G13 | Legacy migration | `migrateLegacyGroups()` converts old `groups` JSON → variants | ✅ |
+| G14 | Delete group (with confirmation) | trash `DankIcon` → `pendingDeleteIndex` → confirm row → `removeGroup()` | ✅ |
+
+> **Deleting a group:** `PluginService.removePluginVariant()` also calls
+> `removeWidgetFromDankBar(fullId)`, so any bar widget bound to that group is
+> removed from the bar automatically. The settings panel shows a confirmation
+> row warning about this before deleting.
 
 ### App management
 
