@@ -228,6 +228,15 @@ PluginSettings {
         draftDirty = false
         root.newlyCreatedId = variantId
         root.editingOpen = true
+        // Focus the name field and select the placeholder text so the user
+        // can type straight over it.
+        Qt.callLater(function() {
+            groupNameInput.forceActiveFocus()
+            // Defer the selection so it runs after the focus/text updates.
+            Qt.callLater(function() {
+                groupNameInput.select(0, groupNameInput.text.length)
+            })
+        })
         return variantId
     }
     
@@ -976,6 +985,8 @@ PluginSettings {
                         }
                         text: root.selectedGroup ? (root.selectedGroup.name || "") : ""
                         color: Theme.surfaceText
+                        selectionColor: Theme.primary
+                        selectedTextColor: Theme.surface
                         font.pixelSize: Theme.fontSizeMedium
                         clip: true
                         onTextChanged: {
