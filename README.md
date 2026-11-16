@@ -1,6 +1,6 @@
 # App Stack — Multi-Group Bar Widget Plugin for Dux Shell
 
-A [Dux Shell](https://duxlabs.dev) bar widget that manages multiple independent app groups from a **single plugin instance**. Each group gets its own bar icon and app list, placeable at the beginning, middle, or end of any bar.
+A [Dux Shell](https://duxlabs.dev) bar widget that manages multiple independent app groups. Each group is a **plugin variant** — add the widget to the bar and pick which group it shows. Each group gets its own bar icon and app list, placeable at the beginning, middle, or end of any bar.
 
 <img src="docs/screenshot.webp" width="50%" alt="App Stack popout">
 
@@ -8,7 +8,7 @@ A [Dux Shell](https://duxlabs.dev) bar widget that manages multiple independent 
 
 ## Overview
 
-The built-in Apps Dock widget in Dux Shell shows a single shared list of pinned apps across all instances. App Stack solves this by letting you create multiple app groups from one plugin — each group is a separate bar slot with its own icon, label, and curated set of app shortcuts.
+The built-in Apps Dock widget in Dux Shell shows a single shared list of pinned apps across all instances. App Stack solves this by letting you create multiple app groups, each exposed as a **variant**. When you add the widget to the bar, Dux Shell asks which group to attach — so each bar slot gets its own icon, label, and curated set of app shortcuts.
 
 > **Compatibility:** Tested on [niri](https://github.com/YaLTeR/niri) with Dux Shell / Dank Material Shell. Behaviour on other compositors has not been confirmed.
 
@@ -48,18 +48,38 @@ git clone https://github.com/ubikq/dms-app-stack.git
 
 ## Installation
 
+The plugin requires only the plugin files — not the entire repository. From the project root:
+
 ```bash
-# Copy the plugin directory into the Dux Shell plugins folder
-cp -r dms-app-stack ~/.config/DuxShell/plugins/appStack_default
+# Create the plugin directory
+mkdir -p ~/.config/DankMaterialShell/plugins/appStack_default
 
-# Activate
-# Settings → Plugins → Scan for Plugins → toggle "App Stack" on → dux restart
-
-# Add to your bar
-# Settings → DankBar → add "App Stack" to a section
+# Copy only the plugin files
+cp plugin.json          ~/.config/DankMaterialShell/plugins/appStack_default/
+cp AppGroupWidget.qml   ~/.config/DankMaterialShell/plugins/appStack_default/
+cp AppGroupSettings.qml ~/.config/DankMaterialShell/plugins/appStack_default/
+cp -r scripts/          ~/.config/DankMaterialShell/plugins/appStack_default/
 ```
 
-No further editing is required — the plugin ID is already set to `appStack_default`.
+> **Note:** If you are using **Dux Shell** (the upstream variant), the config directory would be `~/.config/DuxShell/` instead of `~/.config/DankMaterialShell/`. Adjust the path accordingly.
+
+### Activating the plugin
+
+```bash
+# In Dank Material Shell:
+# Settings → Plugins → Scan for Plugins → toggle "App Stack" on → restart Dank Material Shell
+
+# In Dux Shell:
+# Settings → Plugins → Scan for Plugins → toggle "App Stack" on → restart Dux Shell
+```
+
+### Adding to your bar
+
+```
+Settings → DankBar → add "App Stack - <group name>" widget to a section
+```
+
+Each group appears as its own entry in the widget list (e.g. `App Stack - Development`). Pick the group you want for that bar slot. To change it later, remove the widget and add the desired group instead.
 
 ---
 
@@ -101,7 +121,7 @@ Browse at [fonts.google.com/icons](https://fonts.google.com/icons). Use the snak
 
 ### Bar placement
 
-Because each group is stored in a shared `groups` array and distinguished by `widgetInstanceId`, you can place the widget on **multiple bars** or in **different sections** of the same bar. Each bar slot gets its own group automatically — no file copying or plugin duplication required.
+Each group is a plugin **variant**, so you can place the widget on **multiple bars** or in **different sections** of the same bar — one entry per group. Each bar slot is bound to the group you picked when adding it, and edits made in the popout are saved to that group's variant.
 
 ---
 
@@ -111,10 +131,10 @@ If you have existing `appStack_*` plugin directories from previous versions, you
 
 ```bash
 # Preview what would be migrated (dry run)
-python3 ~/.config/DuxShell/plugins/appStack_default/scripts/migrate-groups.py
+python3 ~/.config/DankMaterialShell/plugins/appStack_default/scripts/migrate-groups.py
 
 # Perform the actual migration
-python3 ~/.config/DuxShell/plugins/appStack_default/scripts/migrate-groups.py --migrate
+python3 ~/.config/DankMaterialShell/plugins/appStack_default/scripts/migrate-groups.py --migrate
 ```
 
 The migration script:
@@ -125,7 +145,7 @@ The migration script:
 
 > **Backup your configuration before migrating:**
 > ```bash
-> cp -r ~/.config/DuxShell ~/.config/DuxShell.bak
+> cp -r ~/.config/DankMaterialShell ~/.config/DankMaterialShell.bak
 > ```
 
 ---
@@ -151,20 +171,20 @@ journalctl --user -u dank-material-shell -f
 Test the app scanner script directly:
 
 ```bash
-python3 ~/.config/DuxShell/plugins/appStack_default/scripts/list-apps.py | python3 -m json.tool | head -40
+python3 ~/.config/DankMaterialShell/plugins/appStack_default/scripts/list-apps.py | python3 -m json.tool | head -40
 ```
 
 ---
 
 ## Data model
 
-The plugin stores all groups in a single `groups` array in `pluginData`:
+Each group is stored as a DMS **variant** under the `variants` key in `pluginData`:
 
 ```jsonc
 {
-  "groups": [
+  "variants": [
     {
-      "id": "group_0",
+      "id": "variant_1700000000000",
       "name": "Development",
       "icon": "code",
       "showLabel": true,
@@ -174,7 +194,7 @@ The plugin stores all groups in a single `groups` array in `pluginData`:
       ]
     },
     {
-      "id": "group_1",
+      "id": "variant_1700000000001",
       "name": "Media",
       "icon": "movie",
       "showLabel": false,
@@ -182,12 +202,16 @@ The plugin stores all groups in a single `groups` array in `pluginData`:
         { "name": "Firefox", "icon": "language", "exec": "firefox", "source": "manual" }
       ]
     }
-  ],
-  "version": 2
+  ]
 }
 ```
 
-Each bar slot (distinguished by `widgetInstanceId`) maps to a `groups` array index. Instance 0 → `groups[0]`, instance 1 → `groups[1]`, etc.
+Each bar slot is bound to one variant. Dux Shell injects `variantId` and
+`variantData` into the widget, and the widget persists edits with
+`pluginService.updatePluginVariant(pluginId, variantId, { apps })`.
+
+> **Legacy:** older versions stored a `groups` array. On first open, the
+> settings panel migrates each entry to a variant automatically.
 
 ---
 
@@ -195,13 +219,13 @@ Each bar slot (distinguished by `widgetInstanceId`) maps to a `groups` array ind
 
 This plugin is provided as-is, with no warranty of any kind. Use it at your own risk.
 
-Before installing or migrating, **back up your Dux Shell configuration**:
+Before installing or migrating, **back up your DMS configuration**:
 
 ```bash
-cp -r ~/.config/DuxShell ~/.config/DuxShell.bak
+cp -r ~/.config/DankMaterialShell ~/.config/DankMaterialShell.bak
 ```
 
-The migration script copies and modifies files inside your Dux Shell plugins directory. Always verify the results before restarting Dux Shell. The author accepts no responsibility for lost configuration, broken setups, or any other damage arising from the use of this software.
+The migration script copies and modifies files inside your DankMaterialShell plugins directory. Always verify the results before restarting Dank Material Shell. The author accepts no responsibility for lost configuration, broken setups, or any other damage arising from the use of this software.
 
 ---
 

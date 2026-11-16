@@ -7,35 +7,36 @@ import qs.Modules.Plugins
 
 // AppGroupWidget — Multi-group bar widget for App Stack plugin.
 //
-// Data shape: pluginData.groups is a JSON array of group objects:
-// [
-//   { "id": "group_0", "name": "Dev", "icon": "code", "showLabel": true,
-//     "apps": [{ "name": "...", "icon": "...", "iconPath": "...", "exec": "...", "source": "..." }] },
-//   ...
-// ]
+// Each app group is a DMS *variant*. When the user adds this widget to
+// the bar, DMS asks which variant (group) to attach. The host then
+// injects `variantId` and `variantData` into this component.
 //
-// widgetInstanceId (auto-injected by Dux Shell) maps each bar slot to a
-// groups array index. Instance 0 → groups[0], instance 1 → groups[1], etc.
+// Variant data shape (one group):
+//   { "id": "variant_...", "name": "Dev", "icon": "code", "showLabel": true,
+//     "apps": [{ "name": "...", "icon": "...", "iconPath": "...", "exec": "...", "source": "..." }] }
 
 PluginComponent {
     id: root
 
-    // ── Multi-group support via widgetInstanceId ─────────────────────────
-    // widgetInstanceId is auto-injected by Dux Shell. Each time the user
-    // adds this widget to the bar, Dux Shell assigns a sequential integer
-    // starting from 0. We map that index to groups[widgetInstanceId].
+    // ── Variant binding (injected by SurfaceWidgetHost) ──────────────────
+    // variantId   — id of the variant this bar slot is bound to
+    // variantData — the full variant config (our "group" object)
+    property string variantId: ""
+    property var variantData: null
 
     readonly property string listAppsScript:
         Qt.resolvedUrl("./scripts/list-apps.py").toString().replace(/^file:\/\//, "")
 
-    // Current group resolved from widgetInstanceId
-    property var currentGroup: {
-        if (!pluginData.groups || !(pluginData.groups instanceof Array))
-            return null
-        var idx = widgetInstanceId
-        if (idx < 0 || idx >= pluginData.groups.length)
-            return null
-        return pluginData.groups[idx]
+    // Current group = the variant this instance is bound to
+    property var currentGroup: variantData
+
+    // Refresh variantData when the settings panel edits this variant
+    Connections {
+        target: pluginService
+        function onPluginDataChanged(changedPluginId) {
+            if (changedPluginId === pluginId && variantId)
+                root.variantData = pluginService.getPluginVariantData(pluginId, variantId)
+        }
     }
 
     // Derived properties for convenience (null-safe)
@@ -57,9 +58,9 @@ PluginComponent {
     // render nothing (they should not be added to the bar).
 
     horizontalBarPill: Component {
-        visible: root.currentGroup !== null
         Row {
             spacing: Theme.spacingS
+            visible: root.currentGroup !== null
 
             DankIcon {
                 name: root._groupIcon
@@ -79,12 +80,12 @@ PluginComponent {
     }
 
     verticalBarPill: Component {
-        visible: root.currentGroup !== null
         DankIcon {
             name: root._groupIcon
             size: Theme.iconSize
             color: Theme.primary
             anchors.horizontalCenter: parent.horizontalCenter
+            visible: root.currentGroup !== null
         }
     }
 
@@ -117,12 +118,10 @@ PluginComponent {
 
             // ── App list mutations ─────────────────────────────────────
             // Save apps array back to the groups array in pluginData.
-            function saveApps(list) {
-                if (!root.currentGroup || !root.pluginService) return
-                var groups = pluginData.groups.slice()
-                groups[widgetInstanceId] = Object.assign({}, root.currentGroup, { apps: list })
-                root.pluginService.savePluginData(root.pluginId, "groups", JSON.stringify(groups))
-            }
+                        function saveApps(list) {
+                            if (!root.variantId || !root.pluginService) return
+                            root.pluginService.updatePluginVariant(root.pluginId, root.variantId, { apps: list })
+                        }
 
             function removeApp(idx) {
                 var newList = liveApps.filter(function(_, i) { return i !== idx })

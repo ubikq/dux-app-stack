@@ -6,6 +6,7 @@
   "author": "Pieter van Heerden",
   "icon": "apps",
   "type": "widget",
+  "capabilities": ["multiple-usecases", "variants"],
   "component": "./AppGroupWidget.qml",
   "settings": "./AppGroupSettings.qml",
   "permissions": ["settings_read", "settings_write", "process"]

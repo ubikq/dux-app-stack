@@ -1,4 +1,6 @@
 import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
 import qs.Common
@@ -8,36 +10,54 @@ import qs.Widgets
 
 // AppGroupSettings — Unified multi-group settings for App Stack plugin.
 //
-// Data shape: pluginData.groups is a JSON array of group objects:
-// [
-//   { "id": "group_0", "name": "Dev", "icon": "code", "showLabel": true,
-//     "apps": [{ "name": "...", "icon": "...", "iconPath": "...", "exec": "...", "source": "..." }] },
-//   ...
-// ]
+// Each app group is a DMS *variant*. The variant config shape is:
+//   { "id": "variant_...", "name": "Dev", "icon": "code", "showLabel": true,
+//     "apps": [{ "name": "...", "icon": "...", "iconPath": "...", "exec": "...", "source": "..." }] }
 //
-// Each group is managed independently via the group list on the left and
-// app list on the right. No hardcoded pluginId — uses auto-injected value.
+// The UI below is written against `groupsArray` / `selectedGroup`; those are
+// thin aliases over the PluginSettings variant API (createVariant /
+// updateVariant / removeVariant), so each bar widget can bind to one variant.
+//
+// pluginId is required by PluginSettings and must be declared explicitly.
 
 PluginSettings {
     id: root
-    // pluginId is auto-injected by Dux Shell — do NOT hardcode
-
-    // ── Persistent storage ────────────────────────────────────────────────
-    // Groups array stored as JSON string in pluginData
-    StringSetting {
-        id: groupsDataStore
-        settingKey: "groups"
-        label: "groups"
-        visible: false
-    }
+    pluginId: "appStack_default"
 
     // ── State ─────────────────────────────────────────────────────────────
-    property var groupsArray: {
-        try {
-            var arr = JSON.parse(groupsDataStore.value || "[]")
-            if (Array.isArray(arr)) return arr
-        } catch(e) {}
-        return []
+    // Groups are stored as DMS variants (one variant per group).
+    property var groupsArray: root.variants
+
+    // One-time migration: legacy `groups` JSON array → variants.
+    // Also restore the last-edited group so reopening the page is less confusing.
+    Component.onCompleted: {
+        Qt.callLater(root.migrateLegacyGroups)
+        var saved = root.loadState("selectedGroupIndex", -1)
+        if (saved >= 0 && saved < root.groupsArray.length)
+            root.selectedGroupIndex = saved
+    }
+
+    onSelectedGroupIndexChanged: {
+        if (selectedGroupIndex >= 0)
+            root.saveState("selectedGroupIndex", selectedGroupIndex)
+    }
+
+    function migrateLegacyGroups() {
+        if (root.variants.length > 0) return
+        var legacy = root.loadValue("groups", "")
+        if (!legacy) return
+        var arr = []
+        try { arr = JSON.parse(legacy) } catch (e) { return }
+        if (!Array.isArray(arr) || arr.length === 0) return
+        for (var i = 0; i < arr.length; i++) {
+            var g = arr[i] || {}
+            root.createVariant(g.name || ("Group " + (i + 1)), {
+                icon: g.icon || "apps",
+                showLabel: g.showLabel || false,
+                apps: g.apps || []
+            })
+        }
+        ToastService.showInfo("Migrated", arr.length + " group(s) converted to variants")
     }
 
     property int selectedGroupIndex: -1
@@ -70,7 +90,7 @@ PluginSettings {
         "public", "wifi", "email", "chat", "phone", "settings", "storage", "memory",
         "dns", "router", "devices", "computer", "laptop", "smartphone", "tablet",
         "monitor", "print", "keyboard", "download", "upload", "sync", "cloud",
-        "attach_file", "person", "account_circle", "group", "contacts",
+        "attach_file", "person", "people", "group", "contacts",
         "sports_esports", "gamepad", "fitness_center", "medical_services",
         "favorite", "map", "place", "flight", "directions_car", "shopping_cart",
         "store", "attach_money", "credit_card", "school", "book", "science",
@@ -89,62 +109,48 @@ PluginSettings {
     }
 
     // ── Resolved paths ────────────────────────────────────────────────────
-    readonly property string pluginDir: Qt.resolvedUrl(".").toString().replace(/^file:\/\//, "")
-    readonly property string listAppsScript: Qt.resolvedUrl("./scripts/list-apps.py").toString().replace(/^file:\/\//, "")
+    readonly property string listAppsScript:
+        Qt.resolvedUrl("./scripts/list-apps.py").toString().replace(/^file:\/\//, "")
 
     // ── Computed ──────────────────────────────────────────────────────────
     readonly property var selectedGroup:
         (selectedGroupIndex >= 0 && selectedGroupIndex < groupsArray.length)
             ? groupsArray[selectedGroupIndex] : null
 
-    // ── Functions ─────────────────────────────────────────────────────────
-
-    function saveGroups() {
-        var json = JSON.stringify(groupsArray)
-        groupsDataStore.value = json
-        root.saveValue("groups", json)
-    }
-
-    function addGroup() {
-        var idx = groupsArray.length
-        var newGroup = {
-            id: "group_" + idx,
-            name: "Group " + (idx + 1),
-            icon: "apps",
-            showLabel: false,
-            apps: []
+        // ── Functions ─────────────────────────────────────────────────────────
+    
+        // No-op: variants persist themselves via the PluginSettings API.
+        function saveGroups() {}
+    
+        function addGroup() {
+            var idx = groupsArray.length
+            var variantId = root.createVariant("Group " + (idx + 1), {
+                icon: "apps",
+                showLabel: false,
+                apps: []
+            })
+            selectedGroupIndex = idx
+            return variantId
         }
-        var newGroups = groupsArray.slice()
-        newGroups.push(newGroup)
-        groupsArray = newGroups
-        saveGroups()
-        selectedGroupIndex = idx
-    }
-
-    function removeGroup(idx) {
-        var newGroups = groupsArray.filter(function(_, i) { return i !== idx })
-        groupsArray = newGroups
-        saveGroups()
-        if (selectedGroupIndex >= groupsArray.length)
-            selectedGroupIndex = groupsArray.length > 0 ? groupsArray.length - 1 : -1
-    }
-
-    function updateGroupField(field, value) {
-        if (selectedGroupIndex < 0) return
-        var newGroups = groupsArray.slice()
-        newGroups[selectedGroupIndex] = Object.assign({}, newGroups[selectedGroupIndex])
-        newGroups[selectedGroupIndex][field] = value
-        groupsArray = newGroups
-        saveGroups()
-    }
-
-    function saveGroupApps(apps) {
-        if (selectedGroupIndex < 0) return
-        var newGroups = groupsArray.slice()
-        newGroups[selectedGroupIndex] = Object.assign({}, newGroups[selectedGroupIndex], { apps: apps })
-        groupsArray = newGroups
-        saveGroups()
-    }
+    
+        function removeGroup(idx) {
+            if (idx < 0 || idx >= groupsArray.length) return
+            root.removeVariant(groupsArray[idx].id)
+            if (selectedGroupIndex >= groupsArray.length)
+                selectedGroupIndex = groupsArray.length > 0 ? groupsArray.length - 1 : -1
+        }
+    
+        function updateGroupField(field, value) {
+            if (selectedGroupIndex < 0 || !selectedGroup) return
+            var patch = {}
+            patch[field] = value
+            root.updateVariant(selectedGroup.id, patch)
+        }
+    
+        function saveGroupApps(apps) {
+            if (selectedGroupIndex < 0 || !selectedGroup) return
+            root.updateVariant(selectedGroup.id, { apps: apps })
+        }
 
     function addApp(appData) {
         if (!selectedGroup) return
@@ -250,6 +256,18 @@ PluginSettings {
     onPickerFilterChanged: filterSystemApps()
     onAppIconPickerFilterChanged: filterAppIconMatches()
 
+    function openPicker() {
+        root.pickerVisible = !root.pickerVisible
+        if (root.pickerVisible) {
+            root.pickerLoading = true
+            root.pickerFailed = false
+            if (systemAppsModel.count === 0)
+                appScanner.running = true
+            else
+                root.filterSystemApps()
+        }
+    }
+
     // ── System app scanner ────────────────────────────────────────────────
     Process {
         id: appScanner
@@ -267,7 +285,7 @@ PluginSettings {
                         Qt.callLater(root.tryAutoDetectIcon)
                     if (root.appIconPickerVisible)
                         Qt.callLater(root.filterAppIconMatches)
-                } catch(e) {}
+                } catch (e) {}
                 root.pickerLoading = false
             }
         }
@@ -279,7 +297,7 @@ PluginSettings {
         }
     }
 
-    // ── Layout ────────────────────────────────────────────────────────────
+    // ── UI ────────────────────────────────────────────────────────────────
     Column {
         width: parent.width
         spacing: Theme.spacingM
@@ -287,8 +305,7 @@ PluginSettings {
         // ══════════════════════════════════════════════════════════════════
         // ── Group Management Header ───────────────────────────────────────
         // ══════════════════════════════════════════════════════════════════
-
-        Row {
+        RowLayout {
             width: parent.width
             spacing: Theme.spacingS
 
@@ -299,13 +316,15 @@ PluginSettings {
                 color: Theme.surfaceText
             }
 
-            Spacer { layout: Row.Spacer }
+            Item { Layout.fillWidth: true }
 
             StyledRect {
-                height: addGroupBtnLabel.implicitHeight + Theme.spacingS * 2
-                width: addGroupBtnLabel.implicitWidth + Theme.spacingL * 2
+                Layout.preferredHeight: addGroupBtnLabel.implicitHeight + Theme.spacingS * 2
+                Layout.preferredWidth: addGroupBtnLabel.implicitWidth + Theme.spacingL * 2
                 radius: Theme.cornerRadius
-                color: addGroupMouse.containsMouse ? Theme.primaryContainer || Theme.surfaceContainerHighest : Theme.surfaceContainerHigh
+                color: addGroupMouse.containsMouse
+                       ? (Theme.primaryContainer || Theme.surfaceContainerHighest)
+                       : Theme.surfaceContainerHigh
 
                 StyledText {
                     id: addGroupBtnLabel
@@ -329,7 +348,6 @@ PluginSettings {
             width: parent.width
             height: Math.min(groupsArray.length * 44 + 10, 200)
             clip: true
-            radius: Theme.cornerRadius
 
             Column {
                 width: parent.width
@@ -345,7 +363,7 @@ PluginSettings {
                         Rectangle {
                             anchors.fill: parent
                             color: index === root.selectedGroupIndex
-                                   ? Theme.primaryContainer || Theme.surfaceContainerHighest
+                                   ? (Theme.primaryContainer || Theme.surfaceContainerHighest)
                                    : Theme.surfaceContainerHigh
                             radius: Theme.cornerRadius
                         }
@@ -377,6 +395,7 @@ PluginSettings {
                                 height: Theme.iconSize
 
                                 MouseArea {
+                                    id: groupDeleteMouse
                                     anchors.fill: parent
                                     hoverEnabled: true
                                     cursorShape: Qt.PointingHandCursor
@@ -384,7 +403,7 @@ PluginSettings {
                                     DankIcon {
                                         name: "delete"
                                         size: Theme.iconSize
-                                        color: mouse.containsMouse ? Theme.error : Theme.surfaceVariantText
+                                        color: groupDeleteMouse.containsMouse ? Theme.error : Theme.surfaceVariantText
                                         anchors.centerIn: parent
                                     }
                                 }
@@ -413,481 +432,137 @@ PluginSettings {
         // ══════════════════════════════════════════════════════════════════
         // ── Selected Group Settings ───────────────────────────────────────
         // ══════════════════════════════════════════════════════════════════
-
-        visible: root.selectedGroup !== null
-        width: parent.width
-        spacing: Theme.spacingS
-
-        // ── Group name ────────────────────────────────────────────────────
         Column {
             width: parent.width
-            spacing: 4
-
-            StyledText {
-                text: "Group Name"
-                font.pixelSize: Theme.fontSizeSmall
-                color: Theme.surfaceVariantText
-            }
-            StyledRect {
-                width: parent.width
-                height: groupNameInput.implicitHeight + Theme.spacingM * 2
-                color: Theme.surfaceContainerHigh
-                radius: Theme.cornerRadius
-
-                TextInput {
-                    id: groupNameInput
-                    anchors {
-                        left: parent.left; right: parent.right
-                        verticalCenter: parent.verticalCenter
-                        leftMargin: Theme.spacingM; rightMargin: Theme.spacingM
-                    }
-                    text: root.selectedGroup.name || ""
-                    color: Theme.surfaceText
-                    font.pixelSize: Theme.fontSizeMedium
-                    clip: true
-                    onTextChanged: root.updateGroupField("name", text)
-                    Text {
-                        visible: groupNameInput.text === ""
-                        text: "Group name"
-                        color: Theme.surfaceVariantText
-                        font: groupNameInput.font
-                    }
-                }
-            }
-        }
-
-        // ── Group icon ────────────────────────────────────────────────────
-        Column {
-            width: parent.width
-            spacing: 4
-
-            StyledText {
-                text: "Group Icon (Material icon name)"
-                font.pixelSize: Theme.fontSizeSmall
-                color: Theme.surfaceVariantText
-            }
-
-            Row {
-                width: parent.width
-                spacing: Theme.spacingS
-
-                DankIcon {
-                    name: groupIconInput.text || (root.selectedGroup.icon || "apps")
-                    size: Theme.iconSize
-                    color: Theme.primary
-                    anchors.verticalCenter: parent.verticalCenter
-                }
-
-                StyledRect {
-                    height: groupIconInput.implicitHeight + Theme.spacingM * 2
-                    width: parent.width - Theme.iconSize - groupIconBrowseBtn.width
-                           - Theme.spacingS * 2
-                    color: Theme.surfaceContainerHigh
-                    radius: Theme.cornerRadius
-
-                    TextInput {
-                        id: groupIconInput
-                        anchors {
-                            left: parent.left; right: parent.right
-                            verticalCenter: parent.verticalCenter
-                            leftMargin: Theme.spacingM; rightMargin: Theme.spacingM
-                        }
-                        text: root.selectedGroup.icon || "apps"
-                        color: Theme.surfaceText
-                        font.pixelSize: Theme.fontSizeMedium
-                        clip: true
-                        onTextChanged: root.updateGroupField("icon", text)
-                        Text {
-                            visible: groupIconInput.text === ""
-                            text: "apps"
-                            color: Theme.surfaceVariantText
-                            font: groupIconInput.font
-                        }
-                    }
-                }
-
-                StyledRect {
-                    id: groupIconBrowseBtn
-                    height: groupIconInput.implicitHeight + Theme.spacingM * 2
-                    width: groupIconBrowseLabel.implicitWidth + Theme.spacingM * 2
-                    radius: Theme.cornerRadius
-                    color: (groupIconBrowseMouse.containsMouse || root.iconPickerVisible)
-                           ? Theme.surfaceContainerHighest : Theme.surfaceContainerHigh
-
-                    StyledText {
-                        id: groupIconBrowseLabel
-                        anchors.centerIn: parent
-                        text: "Browse"
-                        font.pixelSize: Theme.fontSizeMedium
-                        color: Theme.primary
-                    }
-                    MouseArea {
-                        id: groupIconBrowseMouse
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            root.iconPickerVisible = !root.iconPickerVisible
-                            iconPickerSearchInput.text = ""
-                            root.iconPickerFilter = ""
-                        }
-                    }
-                }
-            }
-
-            // ── Inline icon grid ────────────────────────────────────────
-            visible: root.iconPickerVisible
-            Column {
-                width: parent.width
-                spacing: Theme.spacingXS
-
-                StyledRect {
-                    width: parent.width
-                    height: iconPickerSearchInput.implicitHeight + Theme.spacingM * 2
-                    color: Theme.surfaceContainerHigh
-                    radius: Theme.cornerRadius
-
-                    TextInput {
-                        id: iconPickerSearchInput
-                        anchors {
-                            left: parent.left; right: parent.right
-                            verticalCenter: parent.verticalCenter
-                            leftMargin: Theme.spacingM; rightMargin: Theme.spacingM
-                        }
-                        color: Theme.surfaceText
-                        font.pixelSize: Theme.fontSizeMedium
-                        clip: true
-                        onTextChanged: root.iconPickerFilter = text.toLowerCase()
-                        Text {
-                            visible: iconPickerSearchInput.text === ""
-                            text: "Search icons…"
-                            color: Theme.surfaceVariantText
-                            font: iconPickerSearchInput.font
-                        }
-                    }
-                }
-
-                Flow {
-                    width: parent.width
-                    spacing: 4
-
-                    Repeater {
-                        model: root.filteredIconList
-                        delegate: Item {
-                            width: 68; height: 68
-
-                            StyledRect {
-                                anchors.fill: parent; anchors.margins: 2
-                                radius: Theme.cornerRadius
-                                color: iconCellMouse.containsMouse
-                                       ? Theme.surfaceContainerHighest : Theme.surfaceContainerHigh
-
-                                Column {
-                                    anchors.centerIn: parent
-                                    spacing: 2
-
-                                    DankIcon {
-                                        name: modelData
-                                        size: Theme.iconSize
-                                        color: groupIconInput.text === modelData
-                                               ? Theme.primary : Theme.surfaceText
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                    }
-
-                                    StyledText {
-                                        text: modelData
-                                        font.pixelSize: 9
-                                        color: Theme.surfaceVariantText
-                                        width: 62
-                                        elide: Text.ElideRight
-                                        horizontalAlignment: Text.AlignHCenter
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                    }
-                                }
-
-                                MouseArea {
-                                    id: iconCellMouse
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        groupIconInput.text = modelData
-                                        root.updateGroupField("icon", modelData)
-                                        root.iconPickerVisible = false
-                                        iconPickerSearchInput.text = ""
-                                        root.iconPickerFilter = ""
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // ── Show label toggle ─────────────────────────────────────────────
-        ToggleSetting {
-            settingKey: "group_showLabel_" + (selectedGroupIndex + 1)
-            label: "Show label in bar"
-            description: "Display the group name next to the icon in DankBar"
-            defaultValue: root.selectedGroup.showLabel || false
-            onValueChanged: root.updateGroupField("showLabel", value)
-        }
-
-        // ══════════════════════════════════════════════════════════════════
-        // ── App Management ────────────────────────────────────────────────
-        // ══════════════════════════════════════════════════════════════════
-
-        Rectangle { width: parent.width; height: 1; color: Theme.outline; opacity: 0.3 }
-
-        StyledText {
-            width: parent.width
-            text: "Apps (" + (root.selectedGroup ? (root.selectedGroup.apps || []).length : 0) + "/10)"
-            font.pixelSize: Theme.fontSizeLarge
-            font.weight: Font.Bold
-            color: Theme.surfaceText
-        }
-
-        // ── Action buttons ────────────────────────────────────────────────
-        Row {
             spacing: Theme.spacingS
+            visible: root.selectedGroup !== null
 
-            StyledRect {
-                id: pickerBtn
-                height: pickerBtnLabel.implicitHeight + Theme.spacingS * 2
-                width: pickerBtnLabel.implicitWidth + Theme.spacingL * 2
-                radius: Theme.cornerRadius
-                color: (pickerMouse.containsMouse || root.pickerVisible)
-                       ? Theme.secondaryContainer || Theme.surfaceContainerHighest : Theme.surfaceContainerHigh
-
-                StyledText {
-                    id: pickerBtnLabel
-                    anchors.centerIn: parent
-                    text: root.pickerVisible ? "Hide App Picker" : "Choose from Installed Apps"
-                    font.pixelSize: Theme.fontSizeMedium
-                    color: (pickerMouse.containsMouse || root.pickerVisible)
-                           ? Theme.onSecondaryContainer || Theme.surfaceText : Theme.surfaceText
-                }
-                MouseArea {
-                    id: pickerMouse
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        root.pickerVisible = !root.pickerVisible
-                        if (root.pickerVisible && systemAppsModel.count === 0 && !root.pickerLoading) {
-                            root.pickerFailed = false
-                            root.pickerLoading = true
-                            appScanner.running = true
-                        }
-                    }
-                }
+            // ── Editing header ────────────────────────────────────────────
+            StyledText {
+                text: "Editing: " + (root.selectedGroup ? (root.selectedGroup.name || "Unnamed") : "")
+                font.pixelSize: Theme.fontSizeMedium
+                font.weight: Font.Bold
+                color: Theme.primary
+                elide: Text.ElideRight
+                width: parent.width
             }
 
-            StyledRect {
-                id: addManuallyBtn
-                height: addManuallyLabel.implicitHeight + Theme.spacingS * 2
-                width: addManuallyLabel.implicitWidth + Theme.spacingL * 2
-                radius: Theme.cornerRadius
-                color: (addManuallyMouse.containsMouse || root.showManualForm)
-                       ? Theme.primaryContainer || Theme.surfaceContainerHighest : Theme.surfaceContainerHigh
-
-                StyledText {
-                    id: addManuallyLabel
-                    anchors.centerIn: parent
-                    text: root.showManualForm ? "Cancel" : "Add Manually"
-                    font.pixelSize: Theme.fontSizeMedium
-                    color: (addManuallyMouse.containsMouse || root.showManualForm)
-                           ? Theme.onPrimary || Theme.surface : Theme.primary
-                }
-                MouseArea {
-                    id: addManuallyMouse
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        root.showManualForm = !root.showManualForm
-                        if (!root.showManualForm) {
-                            root.editingAppName = ""
-                            root.editingAppIcon = ""
-                            root.editingAppExec = ""
-                            root._manualIconPath = ""
-                            root.appIconPickerVisible = false
-                            root.appIconPickerFilter = ""
-                        }
-                    }
-                }
-            }
-        }
-
-        // ── Manual entry form ─────────────────────────────────────────────
-        visible: root.showManualForm
-        Column {
-            width: parent.width
-            spacing: Theme.spacingXS
-
-            // Name field
+            // ── Group name ────────────────────────────────────────────────
             Column {
                 width: parent.width
                 spacing: 4
 
                 StyledText {
-                    text: "Name"
+                    text: "Group Name"
                     font.pixelSize: Theme.fontSizeSmall
                     color: Theme.surfaceVariantText
                 }
                 StyledRect {
                     width: parent.width
-                    height: manualNameInput.implicitHeight + Theme.spacingM * 2
+                    height: groupNameInput.implicitHeight + Theme.spacingM * 2
                     color: Theme.surfaceContainerHigh
                     radius: Theme.cornerRadius
 
                     TextInput {
-                        id: manualNameInput
+                        id: groupNameInput
                         anchors {
                             left: parent.left; right: parent.right
                             verticalCenter: parent.verticalCenter
                             leftMargin: Theme.spacingM; rightMargin: Theme.spacingM
                         }
-                        text: root.editingAppName
+                        text: root.selectedGroup ? (root.selectedGroup.name || "") : ""
                         color: Theme.surfaceText
                         font.pixelSize: Theme.fontSizeMedium
                         clip: true
-                        onAccepted: if (manualExecInput.text.trim()) root.commitEditManualAdd()
                         onTextChanged: {
-                            root.editingAppName = text
-                            if (root.editingAppIcon === "") Qt.callLater(root.tryAutoDetectIcon)
-                        }
-                        Text {
-                            visible: manualNameInput.text === ""
-                            text: "App name (e.g. Firefox)"
-                            color: Theme.surfaceVariantText
-                            font: manualNameInput.font
+                            var cur = root.selectedGroup ? (root.selectedGroup.name || "") : ""
+                            if (cur !== text)
+                                root.updateGroupField("name", text)
                         }
                     }
                 }
             }
 
-            // Icon field
+            // ── Group icon ────────────────────────────────────────────────
             Column {
                 width: parent.width
                 spacing: 4
 
                 StyledText {
-                    text: "Icon"
+                    text: "Group Icon"
                     font.pixelSize: Theme.fontSizeSmall
                     color: Theme.surfaceVariantText
                 }
-
                 Row {
                     width: parent.width
                     spacing: Theme.spacingS
 
-                    Item {
-                        width: Theme.iconSize; height: Theme.iconSize
-                        anchors.verticalCenter: parent.verticalCenter
+                    StyledRect {
+                        height: Theme.iconSize + Theme.spacingM * 2
+                        width: Theme.iconSize + Theme.spacingM * 2
+                        radius: Theme.cornerRadius
+                        color: Theme.surfaceContainerHigh
 
-                        Image {
-                            visible: root._manualIconPath !== ""
-                            source: root._manualIconPath !== "" ? ("file://" + root._manualIconPath) : ""
-                            width: Theme.iconSize; height: Theme.iconSize
-                            fillMode: Image.PreserveAspectFit; smooth: true
-                            anchors.fill: parent
-                        }
                         DankIcon {
-                            visible: root._manualIconPath === ""
-                            name: root.editingAppIcon || "apps"
+                            name: root.selectedGroup ? (root.selectedGroup.icon || "apps") : "apps"
                             size: Theme.iconSize
-                            color: Theme.primary
                             anchors.centerIn: parent
                         }
                     }
 
-                    StyledRect {
-                        height: manualIconInput.implicitHeight + Theme.spacingM * 2
-                        width: parent.width - Theme.iconSize - chooseIconBtn.width
-                               - Theme.spacingS * 2
-                        color: Theme.surfaceContainerHigh
-                        radius: Theme.cornerRadius
-
-                        TextInput {
-                            id: manualIconInput
-                            anchors {
-                                left: parent.left; right: parent.right
-                                verticalCenter: parent.verticalCenter
-                                leftMargin: Theme.spacingM; rightMargin: Theme.spacingM
-                            }
-                            text: root.editingAppIcon
-                            color: Theme.surfaceText
-                            font.pixelSize: Theme.fontSizeMedium
-                            clip: true
-                            onTextChanged: {
-                                root.editingAppIcon = text
-                                if (!root._iconSetByCode) root._manualIconPath = ""
-                            }
-                            Text {
-                                visible: manualIconInput.text === ""
-                                text: "auto-detect from name/command"
-                                color: Theme.surfaceVariantText
-                                font: manualIconInput.font
-                            }
+                    TextField {
+                        id: groupIconInput
+                        width: parent.width - Theme.iconSize - Theme.spacingM * 4 - 60
+                        text: root.selectedGroup ? (root.selectedGroup.icon || "apps") : "apps"
+                        color: Theme.surfaceText
+                        placeholderText: "Icon name (e.g. apps, folder, code)"
+                        font.pixelSize: Theme.fontSizeMedium
+                        onTextChanged: {
+                            var cur = root.selectedGroup ? (root.selectedGroup.icon || "apps") : "apps"
+                            if (cur !== text)
+                                root.updateGroupField("icon", text)
                         }
                     }
 
                     StyledRect {
-                        id: chooseIconBtn
-                        height: chooseIconBtnLabel.implicitHeight + Theme.spacingS * 2
-                        width: chooseIconBtnLabel.implicitWidth + Theme.spacingM * 2
+                        height: Theme.iconSize + Theme.spacingS
+                        width: iconPickerBtnLabel.implicitWidth + Theme.spacingM * 2
                         radius: Theme.cornerRadius
-                        color: (chooseIconMouse.containsMouse || root.appIconPickerVisible)
-                               ? Theme.primaryContainer || Theme.surfaceContainerHighest
+                        color: iconPickerBtnMouse.containsMouse
+                               ? (Theme.primaryContainer || Theme.surfaceContainerHighest)
                                : Theme.surfaceContainerHigh
-                        anchors.verticalCenter: parent.verticalCenter
 
                         StyledText {
-                            id: chooseIconBtnLabel
+                            id: iconPickerBtnLabel
                             anchors.centerIn: parent
-                            text: "Choose"
+                            text: "Pick"
                             font.pixelSize: Theme.fontSizeMedium
-                            color: (chooseIconMouse.containsMouse || root.appIconPickerVisible)
-                                   ? Theme.onPrimary || Theme.surface : Theme.primary
+                            color: Theme.primary
                         }
                         MouseArea {
-                            id: chooseIconMouse
+                            id: iconPickerBtnMouse
                             anchors.fill: parent
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                root.appIconPickerVisible = !root.appIconPickerVisible
-                                if (root.appIconPickerVisible) {
-                                    root.appIconPickerFilter = ""
-                                    appIconPickerSearch.text = ""
-                                    if (systemAppsModel.count === 0 && !root.pickerLoading) {
-                                        root.pickerFailed = false
-                                        root.pickerLoading = true
-                                        appScanner.running = true
-                                    }
-                                    root.filterAppIconMatches()
-                                }
-                            }
+                            onClicked: root.iconPickerVisible = !root.iconPickerVisible
                         }
                     }
                 }
 
-                // ── App icon picker ───────────────────────────────────────
+                // Inline icon picker
                 Column {
-                    visible: root.appIconPickerVisible
                     width: parent.width
                     spacing: Theme.spacingXS
+                    visible: root.iconPickerVisible
 
                     StyledRect {
                         width: parent.width
-                        height: appIconPickerSearch.implicitHeight + Theme.spacingM * 2
+                        height: iconPickerSearchInput.implicitHeight + Theme.spacingM * 2
                         color: Theme.surfaceContainerHigh
                         radius: Theme.cornerRadius
 
                         TextInput {
-                            id: appIconPickerSearch
+                            id: iconPickerSearchInput
                             anchors {
                                 left: parent.left; right: parent.right
                                 verticalCenter: parent.verticalCenter
@@ -896,108 +571,14 @@ PluginSettings {
                             color: Theme.surfaceText
                             font.pixelSize: Theme.fontSizeMedium
                             clip: true
-                            onTextChanged: root.appIconPickerFilter = text
+                            onTextChanged: root.iconPickerFilter = text.toLowerCase()
                             Text {
-                                visible: appIconPickerSearch.text === ""
-                                text: "Search apps or icons…"
+                                visible: iconPickerSearchInput.text === ""
+                                text: "Search icons…"
                                 color: Theme.surfaceVariantText
-                                font: appIconPickerSearch.font
+                                font: iconPickerSearchInput.font
                             }
                         }
-                    }
-
-                    // Matched app icons
-                    Column {
-                        visible: appIconMatches.count > 0
-                        width: parent.width
-                        spacing: 2
-
-                        StyledText {
-                            text: root.appIconPickerFilter === "" ? "Matched apps" : "App results"
-                            font.pixelSize: Theme.fontSizeSmall
-                            color: Theme.surfaceVariantText
-                        }
-
-                        Repeater {
-                            model: appIconMatches
-                            delegate: Item {
-                                width: parent.width
-                                height: Theme.iconSize + Theme.spacingXS * 2
-
-                                StyledRect {
-                                    anchors { left: parent.left; right: parent.right
-                                              top: parent.top; bottom: parent.bottom; margins: 1 }
-                                    radius: Theme.cornerRadius
-                                    color: appMatchMouse.containsMouse
-                                           ? Theme.surfaceContainerHighest : Theme.surfaceContainerHigh
-
-                                    Row {
-                                        anchors {
-                                            left: parent.left; right: parent.right
-                                            verticalCenter: parent.verticalCenter
-                                            leftMargin: Theme.spacingS; rightMargin: Theme.spacingS
-                                        }
-                                        spacing: Theme.spacingS
-
-                                        Item {
-                                            width: Theme.iconSize; height: Theme.iconSize
-
-                                            Image {
-                                                visible: iconPath !== ""
-                                                source: iconPath !== "" ? ("file://" + iconPath) : ""
-                                                width: Theme.iconSize; height: Theme.iconSize
-                                                fillMode: Image.PreserveAspectFit; smooth: true
-                                                anchors.fill: parent
-                                            }
-                                            DankIcon {
-                                                visible: iconPath === ""
-                                                name: icon || "apps"
-                                                size: Theme.iconSize
-                                                color: Theme.primary
-                                                anchors.centerIn: parent
-                                            }
-                                        }
-
-                                        Item {
-                                            width: parent.width - Theme.iconSize - Theme.spacingS
-                                            height: Theme.iconSize
-
-                                            StyledText {
-                                                text: name || ""
-                                                font.pixelSize: Theme.fontSizeMedium
-                                                color: Theme.surfaceText
-                                                elide: Text.ElideRight
-                                                width: parent.width
-                                                anchors.verticalCenter: parent.verticalCenter
-                                            }
-                                        }
-                                    }
-
-                                    MouseArea {
-                                        id: appMatchMouse
-                                        anchors.fill: parent
-                                        hoverEnabled: true
-                                        cursorShape: Qt.PointingHandCursor
-                                        onClicked: {
-                                            root._iconSetByCode = true
-                                            root.editingAppIcon = icon || "apps"
-                                            root._manualIconPath = iconPath || ""
-                                            root._iconSetByCode = false
-                                            root.appIconPickerVisible = false
-                                            root.appIconPickerFilter = ""
-                                            appIconPickerSearch.text = ""
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Material icons grid
-                    StyledText {
-                        text: "Material icons"
-                        font.pixelSize: Theme.fontSizeSmall
-                        color: Theme.surfaceVariantText
                     }
 
                     Flow {
@@ -1005,15 +586,15 @@ PluginSettings {
                         spacing: 4
 
                         Repeater {
-                            model: root.filteredAppIconList
+                            model: root.filteredIconList
                             delegate: Item {
                                 width: 68; height: 68
 
                                 StyledRect {
                                     anchors.fill: parent; anchors.margins: 2
                                     radius: Theme.cornerRadius
-                                    color: appIconCellMouse.containsMouse
-                                           ? Theme.surfaceContainerHighest : Theme.surfaceContainerHigh
+                                    color: iconCellMouse.containsMouse
+                                           ? (Theme.primaryContainer || Theme.surfaceContainerHighest) : Theme.surfaceContainerHigh
 
                                     Column {
                                         anchors.centerIn: parent
@@ -1022,10 +603,11 @@ PluginSettings {
                                         DankIcon {
                                             name: modelData
                                             size: Theme.iconSize
-                                            color: (root.editingAppIcon === modelData && root._manualIconPath === "")
+                                            color: (root.selectedGroup && root.selectedGroup.icon === modelData)
                                                    ? Theme.primary : Theme.surfaceText
                                             anchors.horizontalCenter: parent.horizontalCenter
                                         }
+
                                         StyledText {
                                             text: modelData
                                             font.pixelSize: 9
@@ -1038,18 +620,15 @@ PluginSettings {
                                     }
 
                                     MouseArea {
-                                        id: appIconCellMouse
+                                        id: iconCellMouse
                                         anchors.fill: parent
                                         hoverEnabled: true
                                         cursorShape: Qt.PointingHandCursor
                                         onClicked: {
-                                            root._iconSetByCode = true
-                                            root.editingAppIcon = modelData
-                                            root._manualIconPath = ""
-                                            root._iconSetByCode = false
-                                            root.appIconPickerVisible = false
-                                            root.appIconPickerFilter = ""
-                                            appIconPickerSearch.text = ""
+                                            root.updateGroupField("icon", modelData)
+                                            root.iconPickerVisible = false
+                                            iconPickerSearchInput.text = ""
+                                            root.iconPickerFilter = ""
                                         }
                                     }
                                 }
@@ -1059,316 +638,589 @@ PluginSettings {
                 }
             }
 
-            // Command field
-            Column {
+            // ── Show label toggle ─────────────────────────────────────────
+            RowLayout {
                 width: parent.width
-                spacing: 4
+                spacing: Theme.spacingS
 
                 StyledText {
-                    text: "Command"
-                    font.pixelSize: Theme.fontSizeSmall
-                    color: Theme.surfaceVariantText
+                    text: "Show Label in Bar"
+                    font.pixelSize: Theme.fontSizeMedium
+                    color: Theme.surfaceText
                 }
-                StyledRect {
-                    width: parent.width
-                    height: manualExecInput.implicitHeight + Theme.spacingM * 2
-                    color: Theme.surfaceContainerHigh
-                    radius: Theme.cornerRadius
 
-                    TextInput {
-                        id: manualExecInput
-                        anchors {
-                            left: parent.left; right: parent.right
-                            verticalCenter: parent.verticalCenter
-                            leftMargin: Theme.spacingM; rightMargin: Theme.spacingM
-                        }
-                        text: root.editingAppExec
+                Item { Layout.fillWidth: true }
+
+                StyledRect {
+                    Layout.preferredWidth: 44
+                    Layout.preferredHeight: 24
+                    radius: 12
+                    color: (root.selectedGroup && root.selectedGroup.showLabel)
+                           ? Theme.primary : Theme.surfaceContainerHigh
+
+                    Rectangle {
+                        width: 18
+                        height: 18
+                        radius: 9
                         color: Theme.surfaceText
+                        anchors.verticalCenter: parent.verticalCenter
+                        x: (root.selectedGroup && root.selectedGroup.showLabel)
+                           ? parent.width - width - 3 : 3
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.updateGroupField("showLabel",
+                            !(root.selectedGroup && root.selectedGroup.showLabel))
+                    }
+                }
+            }
+        }
+
+        // ══════════════════════════════════════════════════════════════════
+        // ── Apps Management ───────────────────────────────────────────────
+        // ══════════════════════════════════════════════════════════════════
+        Column {
+            width: parent.width
+            spacing: Theme.spacingS
+            visible: root.selectedGroup !== null
+
+            RowLayout {
+                width: parent.width
+                spacing: Theme.spacingS
+
+                StyledText {
+                    text: "Apps (" + (root.selectedGroup ? (root.selectedGroup.apps || []).length : 0) + "/10)"
+                    font.pixelSize: Theme.fontSizeLarge
+                    font.weight: Font.Bold
+                    color: Theme.surfaceText
+                }
+
+                Item { Layout.fillWidth: true }
+
+                StyledRect {
+                    Layout.preferredHeight: browseBtnLabel.implicitHeight + Theme.spacingS * 2
+                    Layout.preferredWidth: browseBtnLabel.implicitWidth + Theme.spacingL * 2
+                    radius: Theme.cornerRadius
+                    color: browseBtnMouse.containsMouse
+                           ? (Theme.primaryContainer || Theme.surfaceContainerHighest)
+                           : Theme.surfaceContainerHigh
+
+                    StyledText {
+                        id: browseBtnLabel
+                        anchors.centerIn: parent
+                        text: root.pickerVisible ? "Hide App Picker" : "Choose from Installed Apps"
                         font.pixelSize: Theme.fontSizeMedium
-                        clip: true
-                        onAccepted: if (manualNameInput.text.trim()) root.commitEditManualAdd()
-                        onTextChanged: {
-                            root.editingAppExec = text
-                            if (root.editingAppIcon === "") Qt.callLater(root.tryAutoDetectIcon)
-                        }
-                        Text {
-                            visible: manualExecInput.text === ""
-                            text: "Shell command (e.g. firefox)"
-                            color: Theme.surfaceVariantText
-                            font: manualExecInput.font
+                        color: Theme.primary
+                    }
+                    MouseArea {
+                        id: browseBtnMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.openPicker()
+                    }
+                }
+
+                StyledRect {
+                    Layout.preferredHeight: addAppBtnLabel.implicitHeight + Theme.spacingS * 2
+                    Layout.preferredWidth: addAppBtnLabel.implicitWidth + Theme.spacingL * 2
+                    radius: Theme.cornerRadius
+                    color: addAppBtnMouse.containsMouse
+                           ? (Theme.primaryContainer || Theme.surfaceContainerHighest)
+                           : Theme.surfaceContainerHigh
+
+                    StyledText {
+                        id: addAppBtnLabel
+                        anchors.centerIn: parent
+                        text: "+ Add App"
+                        font.pixelSize: Theme.fontSizeMedium
+                        color: Theme.primary
+                    }
+                    MouseArea {
+                        id: addAppBtnMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            root.showManualForm = !root.showManualForm
+                            if (root.showManualForm) {
+                                root.editingAppName = ""
+                                root.editingAppIcon = ""
+                                root.editingAppExec = ""
+                                root._manualIconPath = ""
+                            }
                         }
                     }
                 }
             }
 
-            // Add button
-            StyledRect {
-                height: addAppLabel.implicitHeight + Theme.spacingS * 2
-                width: addAppLabel.implicitWidth + Theme.spacingL * 2
-                radius: Theme.cornerRadius
-                color: addAppMouse.containsMouse
-                       ? Theme.primaryContainer || Theme.surfaceContainerHighest : Theme.surfaceContainerHigh
+            // ── Manual app form ───────────────────────────────────────────
+            Column {
+                width: parent.width
+                spacing: Theme.spacingS
+                visible: root.showManualForm
 
                 StyledText {
-                    id: addAppLabel
-                    anchors.centerIn: parent
-                    text: "Add App"
+                    text: "Add App Manually"
                     font.pixelSize: Theme.fontSizeMedium
-                    color: addAppMouse.containsMouse ? Theme.onPrimary || Theme.surface : Theme.primary
+                    font.weight: Font.Bold
+                    color: Theme.surfaceText
                 }
-                MouseArea {
-                    id: addAppMouse
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.commitEditManualAdd()
-                }
-            }
-        }
 
-        // ── App list ──────────────────────────────────────────────────────
-        visible: root.selectedGroup && (root.selectedGroup.apps || []).length > 0
-        Column {
-            width: parent.width
-            spacing: 2
-
-            Repeater {
-                model: root.selectedGroup ? (root.selectedGroup.apps || []) : []
-
-                delegate: Item {
+                // App name
+                Column {
                     width: parent.width
-                    height: Theme.iconSize + Theme.spacingS * 2
-                    property bool isEditing: root.editingAppName !== "" && root.editingAppExec !== ""
+                    spacing: 4
 
-                    // Display row
-                    Item {
-                        id: displayRow
-                        anchors {
-                            left: parent.left; right: parent.right
-                            top: parent.top; topMargin: Theme.spacingS
-                        }
-                        height: Theme.iconSize
-                        visible: !isEditing
+                    StyledText {
+                        text: "App Name"
+                        font.pixelSize: Theme.fontSizeSmall
+                        color: Theme.surfaceVariantText
+                    }
+                    TextField {
+                        id: manualNameInput
+                        width: parent.width
+                        placeholderText: "e.g. Firefox"
+                        color: Theme.surfaceText
+                        font.pixelSize: Theme.fontSizeMedium
+                    }
+                }
 
-                        // App icon
-                        Item {
-                            id: iconItem
-                            width: Theme.iconSize
-                            height: Theme.iconSize
-                            anchors { left: parent.left; verticalCenter: parent.verticalCenter }
+                // App exec/command
+                Column {
+                    width: parent.width
+                    spacing: 4
 
-                            Image {
-                                visible: modelData.iconPath !== ""
-                                source: modelData.iconPath !== "" ? ("file://" + modelData.iconPath) : ""
-                                width: Theme.iconSize; height: Theme.iconSize
-                                fillMode: Image.PreserveAspectFit; smooth: true
-                                anchors.fill: parent
-                            }
+                    StyledText {
+                        text: "Command"
+                        font.pixelSize: Theme.fontSizeSmall
+                        color: Theme.surfaceVariantText
+                    }
+                    TextField {
+                        id: manualExecInput
+                        width: parent.width
+                        placeholderText: "e.g. firefox or /usr/bin/app --flag"
+                        color: Theme.surfaceText
+                        font.pixelSize: Theme.fontSizeMedium
+                    }
+                }
+
+                // App icon
+                Column {
+                    width: parent.width
+                    spacing: 4
+
+                    StyledText {
+                        text: "Icon"
+                        font.pixelSize: Theme.fontSizeSmall
+                        color: Theme.surfaceVariantText
+                    }
+                    Row {
+                        width: parent.width
+                        spacing: Theme.spacingS
+
+                        StyledRect {
+                            height: Theme.iconSize + Theme.spacingM * 2
+                            width: Theme.iconSize + Theme.spacingM * 2
+                            radius: Theme.cornerRadius
+                            color: Theme.surfaceContainerHigh
+
                             DankIcon {
-                                visible: modelData.iconPath === ""
-                                name: modelData.icon || "apps"
+                                name: root.editingAppIcon || "apps"
                                 size: Theme.iconSize
-                                color: Theme.primary
                                 anchors.centerIn: parent
                             }
                         }
 
-                        // Name + exec
-                        Column {
-                            anchors {
-                                left: iconItem.right; leftMargin: Theme.spacingS
-                                right: displayBtns.left; rightMargin: Theme.spacingS
-                                verticalCenter: parent.verticalCenter
-                            }
-                            spacing: 2
-
-                            StyledText {
-                                text: modelData.name || "(unnamed)"
-                                font.pixelSize: Theme.fontSizeMedium
-                                color: Theme.surfaceText
-                                elide: Text.ElideRight
-                                width: parent.width
-                            }
-                            StyledText {
-                                visible: modelData.source !== "picker"
-                                text: modelData.exec || ""
-                                font.pixelSize: Theme.fontSizeSmall
-                                color: Theme.surfaceVariantText
-                                elide: Text.ElideRight
-                                width: parent.width
+                        TextField {
+                            id: manualIconInput
+                            width: parent.width - Theme.iconSize - Theme.spacingM * 4 - 60
+                            placeholderText: "Icon name"
+                            color: Theme.surfaceText
+                            font.pixelSize: Theme.fontSizeMedium
+                            text: root.editingAppIcon
+                            onTextChanged: {
+                                if (root.editingAppIcon !== text)
+                                    root.editingAppIcon = text
                             }
                         }
 
-                        // Edit + remove buttons
-                        Row {
-                            id: displayBtns
-                            anchors { right: parent.right; verticalCenter: parent.verticalCenter }
-                            spacing: 0
+                        StyledRect {
+                            height: Theme.iconSize + Theme.spacingS
+                            width: appIconPickerBtnLabel.implicitWidth + Theme.spacingM * 2
+                            radius: Theme.cornerRadius
+                            color: appIconPickerBtnMouse.containsMouse
+                                   ? (Theme.primaryContainer || Theme.surfaceContainerHighest)
+                                   : Theme.surfaceContainerHigh
 
-                            Item {
-                                width: Theme.iconSize + Theme.spacingS
-                                height: Theme.iconSize
-                                visible: modelData.source !== "picker"
+                            StyledText {
+                                id: appIconPickerBtnLabel
+                                anchors.centerIn: parent
+                                text: "Pick"
+                                font.pixelSize: Theme.fontSizeMedium
+                                color: Theme.primary
+                            }
+                            MouseArea {
+                                id: appIconPickerBtnMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.appIconPickerVisible = !root.appIconPickerVisible
+                            }
+                        }
+                    }
 
-                                DankIcon {
-                                    name: "edit"
-                                    size: Theme.iconSize
-                                    color: editMouse.containsMouse ? Theme.primary : Theme.surfaceVariantText
-                                    anchors.centerIn: parent
+                    // Inline app icon picker
+                    Column {
+                        width: parent.width
+                        spacing: Theme.spacingXS
+                        visible: root.appIconPickerVisible
+
+                        StyledRect {
+                            width: parent.width
+                            height: appIconPickerSearch.implicitHeight + Theme.spacingM * 2
+                            color: Theme.surfaceContainerHigh
+                            radius: Theme.cornerRadius
+
+                            TextInput {
+                                id: appIconPickerSearch
+                                anchors {
+                                    left: parent.left; right: parent.right
+                                    verticalCenter: parent.verticalCenter
+                                    leftMargin: Theme.spacingM; rightMargin: Theme.spacingM
                                 }
-                                MouseArea {
-                                    id: editMouse
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        root.editingAppName = modelData.name || ""
-                                        root.editingAppExec = modelData.exec || ""
-                                        root.editingAppIcon = modelData.icon || "apps"
-                                        root.editingAppIconPath = modelData.iconPath || ""
-                                        root.showManualForm = true
+                                color: Theme.surfaceText
+                                font.pixelSize: Theme.fontSizeMedium
+                                clip: true
+                                onTextChanged: root.appIconPickerFilter = text.toLowerCase()
+                                Text {
+                                    visible: appIconPickerSearch.text === ""
+                                    text: "Search icons…"
+                                    color: Theme.surfaceVariantText
+                                    font: appIconPickerSearch.font
+                                }
+                            }
+                        }
+
+                        Flow {
+                            width: parent.width
+                            spacing: 4
+
+                            Repeater {
+                                model: root.filteredAppIconList
+                                delegate: Item {
+                                    width: 68; height: 68
+
+                                    StyledRect {
+                                        anchors.fill: parent; anchors.margins: 2
+                                        radius: Theme.cornerRadius
+                                        color: appIconCellMouse.containsMouse
+                                               ? (Theme.primaryContainer || Theme.surfaceContainerHighest) : Theme.surfaceContainerHigh
+
+                                        Column {
+                                            anchors.centerIn: parent
+                                            spacing: 2
+
+                                            DankIcon {
+                                                name: modelData
+                                                size: Theme.iconSize
+                                                color: root.editingAppIcon === modelData ? Theme.primary : Theme.surfaceText
+                                                anchors.horizontalCenter: parent.horizontalCenter
+                                            }
+
+                                            StyledText {
+                                                text: modelData
+                                                font.pixelSize: 9
+                                                color: Theme.surfaceVariantText
+                                                width: 62
+                                                elide: Text.ElideRight
+                                                horizontalAlignment: Text.AlignHCenter
+                                                anchors.horizontalCenter: parent.horizontalCenter
+                                            }
+                                        }
+
+                                        MouseArea {
+                                            id: appIconCellMouse
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: {
+                                                root.editingAppIcon = modelData
+                                                root.appIconPickerVisible = false
+                                                appIconPickerSearch.text = ""
+                                                root.appIconPickerFilter = ""
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Commit button
+                StyledRect {
+                    width: parent.width
+                    height: commitBtnLabel.implicitHeight + Theme.spacingM * 2
+                    radius: Theme.cornerRadius
+                    color: commitBtnMouse.containsMouse
+                           ? Theme.primary
+                           : (Theme.primaryContainer || Theme.surfaceContainerHigh)
+
+                    StyledText {
+                        id: commitBtnLabel
+                        anchors.centerIn: parent
+                        text: "Add App"
+                        font.pixelSize: Theme.fontSizeMedium
+                        color: Theme.primaryText
+                    }
+                    MouseArea {
+                        id: commitBtnMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.commitEditManualAdd()
+                    }
+                }
+            }
+
+            // ── App list ──────────────────────────────────────────────────
+            ScrollView {
+                width: parent.width
+                height: Math.min((root.selectedGroup ? (root.selectedGroup.apps || []).length : 0) * 60 + 10, 300)
+                clip: true
+                visible: root.selectedGroup && (root.selectedGroup.apps || []).length > 0
+
+                Column {
+                    width: parent.width
+                    spacing: 2
+
+                    Repeater {
+                        model: root.selectedGroup ? (root.selectedGroup.apps || []) : []
+
+                        delegate: Item {
+                            width: parent.width
+                            height: 56
+
+                            Rectangle {
+                                anchors.fill: parent
+                                color: Theme.surfaceContainerHigh
+                                radius: Theme.cornerRadius
+                            }
+
+                            Row {
+                                anchors {
+                                    left: parent.left; right: appBtns.left
+                                    verticalCenter: parent.verticalCenter
+                                    leftMargin: Theme.spacingS
+                                }
+                                spacing: Theme.spacingS
+
+                                Item {
+                                    width: Theme.iconSize
+                                    height: Theme.iconSize
+                                    anchors.verticalCenter: parent.verticalCenter
+
+                                    Image {
+                                        visible: (modelData.iconPath || "") !== ""
+                                        source: (modelData.iconPath || "") !== "" ? ("file://" + modelData.iconPath) : ""
+                                        width: Theme.iconSize; height: Theme.iconSize
+                                        fillMode: Image.PreserveAspectFit; smooth: true
+                                        anchors.fill: parent
+                                    }
+                                    DankIcon {
+                                        visible: (modelData.iconPath || "") === ""
+                                        name: modelData.icon || "apps"
+                                        size: Theme.iconSize
+                                        color: Theme.primary
+                                        anchors.centerIn: parent
+                                    }
+                                }
+
+                                Column {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    spacing: 2
+
+                                    StyledText {
+                                        text: modelData.name || "Unnamed"
+                                        font.pixelSize: Theme.fontSizeMedium
+                                        color: Theme.surfaceText
+                                        elide: Text.ElideRight
+                                        width: parent.width - Theme.spacingS
+                                    }
+
+                                    StyledText {
+                                        visible: modelData.source !== "picker"
+                                        text: modelData.exec || ""
+                                        font.pixelSize: Theme.fontSizeSmall
+                                        color: Theme.surfaceVariantText
+                                        elide: Text.ElideRight
+                                        width: parent.width - Theme.spacingS
                                     }
                                 }
                             }
 
-                            Item {
-                                width: Theme.iconSize + Theme.spacingS
-                                height: Theme.iconSize
-
-                                DankIcon {
-                                    name: "close"
-                                    size: Theme.iconSize
-                                    color: removeMouse.containsMouse ? Theme.error : Theme.surfaceVariantText
-                                    anchors.centerIn: parent
+                            Row {
+                                id: appBtns
+                                anchors {
+                                    right: parent.right
+                                    verticalCenter: parent.verticalCenter
+                                    rightMargin: Theme.spacingS
                                 }
-                                MouseArea {
-                                    id: removeMouse
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: root.removeApp(index)
+                                spacing: 0
+
+                                Item {
+                                    width: Theme.iconSize + Theme.spacingS
+                                    height: Theme.iconSize
+                                    visible: modelData.source !== "picker"
+
+                                    DankIcon {
+                                        name: "edit"
+                                        size: Theme.iconSize
+                                        color: editMouse.containsMouse ? Theme.primary : Theme.surfaceVariantText
+                                        anchors.centerIn: parent
+                                    }
+                                    MouseArea {
+                                        id: editMouse
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: {
+                                            root.editingAppName = modelData.name || ""
+                                            root.editingAppExec = modelData.exec || ""
+                                            root.editingAppIcon = modelData.icon || "apps"
+                                            root.editingAppIconPath = modelData.iconPath || ""
+                                            root._manualIconPath = modelData.iconPath || ""
+                                            root.showManualForm = true
+                                        }
+                                    }
+                                }
+
+                                Item {
+                                    width: Theme.iconSize + Theme.spacingS
+                                    height: Theme.iconSize
+
+                                    DankIcon {
+                                        name: "close"
+                                        size: Theme.iconSize
+                                        color: removeMouseArea.containsMouse ? Theme.error : Theme.surfaceVariantText
+                                        anchors.centerIn: parent
+                                    }
+                                    MouseArea {
+                                        id: removeMouseArea
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: root.removeApp(index)
+                                    }
                                 }
                             }
                         }
                     }
                 }
             }
-        }
 
-        // ── Capacity warning ──────────────────────────────────────────────
-        visible: root.selectedGroup && (root.selectedGroup.apps || []).length >= 10
-        StyledRect {
-            width: parent.width
-            height: warningText.implicitHeight + Theme.spacingM * 2
-            radius: Theme.cornerRadius
-            color: Theme.withAlpha ? Theme.withAlpha(Theme.tertiary || Theme.primary, 0.12) : Theme.surfaceContainerHigh
-
-            StyledText {
-                id: warningText
-                anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter
-                          leftMargin: Theme.spacingM; rightMargin: Theme.spacingM }
-                text: "You have 10 apps in this group. Consider creating another group for additional apps."
-                font.pixelSize: Theme.fontSizeSmall
-                color: Theme.tertiary || Theme.primary
-                wrapMode: Text.WordWrap
-            }
-        }
-
-        // ── App picker ────────────────────────────────────────────────────
-        visible: root.pickerVisible
-        Column {
-            width: parent.width
-            spacing: Theme.spacingXS
-            topPadding: Theme.spacingXS
-
-            StyledText {
-                visible: root.pickerLoading
-                text: "Scanning installed applications…"
-                font.pixelSize: Theme.fontSizeSmall
-                color: Theme.surfaceVariantText
-            }
-
+            // ── Capacity warning ──────────────────────────────────────────
             StyledRect {
-                visible: root.pickerFailed && !root.pickerLoading
                 width: parent.width
-                height: pickerErrText.implicitHeight + Theme.spacingM * 2
+                height: warningText.implicitHeight + Theme.spacingM * 2
                 radius: Theme.cornerRadius
-                color: Theme.withAlpha ? Theme.withAlpha(Theme.error || Theme.primary, 0.12) : Theme.surfaceContainerHigh
+                color: Theme.withAlpha ? Theme.withAlpha(Theme.tertiary || Theme.primary, 0.12) : Theme.surfaceContainerHigh
+                visible: root.selectedGroup && (root.selectedGroup.apps || []).length >= 10
 
                 StyledText {
-                    id: pickerErrText
+                    id: warningText
                     anchors {
                         left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter
                         leftMargin: Theme.spacingM; rightMargin: Theme.spacingM
                     }
-                    text: "Could not scan installed apps. Python 3 is required for this feature.\n" +
-                          "Install:  sudo pacman -S python  (Arch)  |  sudo dnf install python3  (Fedora)  |  sudo apt install python3  (Debian/Ubuntu)\n\n" +
-                          "You can still add apps manually using the Name / Icon / Command fields above."
+                    text: "You have 10 apps in this group. Consider creating another group for additional apps."
                     font.pixelSize: Theme.fontSizeSmall
-                    color: Theme.error || Theme.surfaceText
+                    color: Theme.tertiary || Theme.primary
                     wrapMode: Text.WordWrap
                 }
             }
 
-            StyledRect {
-                visible: !root.pickerLoading && systemAppsModel.count > 0
+            // ── App picker (inline) ───────────────────────────────────────
+            Column {
                 width: parent.width
-                height: pickerSearch.implicitHeight + Theme.spacingM * 2
-                color: Theme.surfaceContainerHigh
-                radius: Theme.cornerRadius
+                spacing: Theme.spacingS
+                visible: root.pickerVisible
 
-                TextInput {
-                    id: pickerSearch
-                    anchors {
-                        left: parent.left; right: parent.right
-                        verticalCenter: parent.verticalCenter
-                        leftMargin: Theme.spacingM; rightMargin: Theme.spacingM
-                    }
-                    color: Theme.surfaceText
-                    font.pixelSize: Theme.fontSizeMedium
-                    clip: true
-                    onTextChanged: root.pickerFilter = text
-                    Text {
-                        visible: pickerSearch.text === ""
-                        text: "Search apps…"
-                        color: Theme.surfaceVariantText
-                        font: pickerSearch.font
+                StyledText {
+                    visible: root.pickerLoading
+                    text: "Scanning installed applications…"
+                    font.pixelSize: Theme.fontSizeSmall
+                    color: Theme.surfaceVariantText
+                }
+
+                StyledRect {
+                    visible: root.pickerFailed && !root.pickerLoading
+                    width: parent.width
+                    height: pickerErrText.implicitHeight + Theme.spacingM * 2
+                    radius: Theme.cornerRadius
+                    color: Theme.withAlpha ? Theme.withAlpha(Theme.error || Theme.primary, 0.12) : Theme.surfaceContainerHigh
+
+                    StyledText {
+                        id: pickerErrText
+                        anchors {
+                            left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: Theme.spacingM; rightMargin: Theme.spacingM
+                        }
+                        text: "Could not scan installed apps. Python 3 is required for this feature.\n" +
+                              "Install:  sudo pacman -S python  (Arch)  |  sudo dnf install python3  (Fedora)  |  sudo apt install python3  (Debian/Ubuntu)\n\n" +
+                              "You can still add apps manually using the Name / Icon / Command fields above."
+                        font.pixelSize: Theme.fontSizeSmall
+                        color: Theme.error || Theme.surfaceText
+                        wrapMode: Text.WordWrap
                     }
                 }
-            }
 
-            StyledRect {
-                visible: !root.pickerLoading && filteredApps.count > 0
-                width: parent.width
-                height: Math.min(pickerListView.contentHeight, 280)
-                clip: true
-                radius: Theme.cornerRadius
-                color: Theme.surfaceContainerLow || Theme.surfaceContainerHigh
+                TextField {
+                    id: pickerSearch
+                    width: parent.width
+                    placeholderText: "Search apps..."
+                    font.pixelSize: Theme.fontSizeMedium
+                    visible: !root.pickerLoading && systemAppsModel.count > 0
+                    onTextChanged: root.pickerFilter = text
+                }
 
                 ListView {
-                    id: pickerListView
-                    anchors.fill: parent
+                    width: parent.width
+                    height: 300
                     model: filteredApps
                     clip: true
-                    spacing: 1
+                    visible: !root.pickerLoading && systemAppsModel.count > 0
 
-                    delegate: Item {
-                        width: pickerListView.width
-                        height: pickerItemRow.implicitHeight + Theme.spacingXS * 2
+                    delegate: StyledRect {
+                        width: parent.width
+                        height: 50
+                        radius: Theme.cornerRadius
+                        color: pickerItemMouse.containsMouse
+                               ? (Theme.surfaceContainerHighest || Theme.surfaceContainerHigh)
+                               : Theme.surfaceContainerHigh
 
-                        StyledRect {
+                        MouseArea {
+                            id: pickerItemMouse
                             anchors.fill: parent
-                            color: pickerItemMouse.containsMouse
-                                   ? Theme.surfaceContainerHighest : "transparent"
-                            radius: 0
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                root.addApp({
+                                    name: name, icon: icon,
+                                    iconPath: iconPath, exec: exec,
+                                    source: "picker"
+                                })
+                                root.pickerVisible = false
+                                pickerSearch.text = ""
+                            }
                         }
 
                         Row {
-                            id: pickerItemRow
                             anchors {
                                 left: parent.left; right: parent.right
                                 verticalCenter: parent.verticalCenter
-                                leftMargin: Theme.spacingS; rightMargin: Theme.spacingS
+                                leftMargin: Theme.spacingS
                             }
                             spacing: Theme.spacingS
 
@@ -1378,17 +1230,17 @@ PluginSettings {
                                 anchors.verticalCenter: parent.verticalCenter
 
                                 Image {
-                                    visible: iconPath !== ""
-                                    source: iconPath !== "" ? ("file://" + iconPath) : ""
+                                    visible: (iconPath || "") !== ""
+                                    source: (iconPath || "") !== "" ? ("file://" + iconPath) : ""
                                     width: Theme.iconSize; height: Theme.iconSize
                                     fillMode: Image.PreserveAspectFit; smooth: true
                                     anchors.fill: parent
                                 }
                                 DankIcon {
-                                    visible: iconPath === ""
-                                    name: "apps"
+                                    visible: (iconPath || "") === ""
+                                    name: icon || "apps"
                                     size: Theme.iconSize
-                                    color: Theme.surfaceVariantText
+                                    color: Theme.primary
                                     anchors.centerIn: parent
                                 }
                             }
@@ -1396,7 +1248,6 @@ PluginSettings {
                             Column {
                                 anchors.verticalCenter: parent.verticalCenter
                                 spacing: 2
-                                width: parent.width - Theme.iconSize - Theme.spacingS * 2
 
                                 StyledText {
                                     text: name || ""
@@ -1415,31 +1266,15 @@ PluginSettings {
                                 }
                             }
                         }
-
-                        MouseArea {
-                            id: pickerItemMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                root.addApp({
-                                    name: name, icon: icon,
-                                    iconPath: iconPath, exec: exec,
-                                    source: "picker"
-                                })
-                                root.pickerVisible = false
-                                pickerSearch.text = ""
-                            }
-                        }
                     }
                 }
-            }
 
-            StyledText {
-                visible: !root.pickerLoading && systemAppsModel.count > 0 && filteredApps.count === 0
-                text: "No apps match \"" + root.pickerFilter + "\""
-                font.pixelSize: Theme.fontSizeSmall
-                color: Theme.surfaceVariantText
+                StyledText {
+                    visible: !root.pickerLoading && systemAppsModel.count > 0 && filteredApps.count === 0
+                    text: "No apps match \"" + root.pickerFilter + "\""
+                    font.pixelSize: Theme.fontSizeSmall
+                    color: Theme.surfaceVariantText
+                }
             }
         }
     }
