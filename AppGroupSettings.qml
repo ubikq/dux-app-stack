@@ -150,6 +150,7 @@ PluginSettings {
     property var draftGroup: null
     property bool draftDirty: false
     property bool editingOpen: false
+    property bool helpExpanded: false
     property int variantsRevision: 0
 
     // The UI reads/writes the draft.
@@ -422,6 +423,152 @@ PluginSettings {
     Column {
         width: parent.width
         spacing: Theme.spacingM
+
+        // ══════════════════════════════════════════════════════════════════
+        // ── How to use (collapsible) ──────────────────────────────────────
+        // ══════════════════════════════════════════════════════════════════
+        StyledRect {
+            width: parent.width
+            height: helpColumn.implicitHeight + Theme.spacingM * 2
+            radius: Theme.cornerRadius
+            color: Theme.surfaceContainerLow || Theme.surfaceContainerHigh
+            border.color: Theme.outlineVariant
+            border.width: 1
+
+            Column {
+                id: helpColumn
+                anchors {
+                    left: parent.left; right: parent.right; top: parent.top
+                    leftMargin: Theme.spacingM; rightMargin: Theme.spacingM; topMargin: Theme.spacingM
+                }
+                spacing: Theme.spacingS
+
+                // Header (click to expand/collapse)
+                Item {
+                    width: parent.width
+                    height: helpHeader.implicitHeight
+
+                    RowLayout {
+                        id: helpHeader
+                        anchors.fill: parent
+                        spacing: Theme.spacingS
+
+                        DankIcon {
+                            Layout.preferredWidth: Theme.iconSize
+                            Layout.preferredHeight: Theme.iconSize
+                            name: "help"
+                            size: Theme.iconSize
+                            color: Theme.primary
+                        }
+
+                        StyledText {
+                            Layout.fillWidth: true
+                            text: "How to use App Stack"
+                            font.pixelSize: Theme.fontSizeMedium
+                            font.weight: Font.Bold
+                            color: Theme.surfaceText
+                        }
+
+                        DankIcon {
+                            Layout.preferredWidth: Theme.iconSize
+                            Layout.preferredHeight: Theme.iconSize
+                            name: root.helpExpanded ? "expand_less" : "expand_more"
+                            size: Theme.iconSize
+                            color: Theme.surfaceVariantText
+                        }
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.helpExpanded = !root.helpExpanded
+                    }
+                }
+
+                // Body
+                Column {
+                    width: parent.width
+                    spacing: Theme.spacingS
+                    visible: root.helpExpanded
+
+                    StyledText {
+                        width: parent.width
+                        text: "1. Create and edit groups"
+                        font.pixelSize: Theme.fontSizeMedium
+                        font.weight: Font.Bold
+                        color: Theme.primary
+                    }
+                    StyledText {
+                        width: parent.width
+                        text: "Each group is a set of app shortcuts that appears as its own widget on the bar. Click \"+ Add Group\" to create one, then select it in the list to edit it. Set its name, icon (type a Material icon name, or click \"Pick\" to browse), and whether to show the label next to the icon. Click \"Save\" to apply your changes, or \"Cancel\" to discard them."
+                        font.pixelSize: Theme.fontSizeMedium
+                        color: Theme.surfaceVariantText
+                        wrapMode: Text.WordWrap
+                    }
+
+                    StyledText {
+                        width: parent.width
+                        text: "2. Add apps to a group"
+                        font.pixelSize: Theme.fontSizeMedium
+                        font.weight: Font.Bold
+                        color: Theme.primary
+                    }
+                    StyledText {
+                        width: parent.width
+                        text: "Each group holds up to 10 apps. Use \"+ Installed Apps\" to browse and search the applications installed on your system (selecting one adds it with its real icon), or \"+ Add Custom App\" to enter a name, command, and icon manually. Remove an app with the × button; edit a custom app with the pencil icon. A warning appears when a group reaches 10 apps."
+                        font.pixelSize: Theme.fontSizeMedium
+                        color: Theme.surfaceVariantText
+                        wrapMode: Text.WordWrap
+                    }
+
+                    StyledText {
+                        width: parent.width
+                        text: "3. Add the widget to your bar"
+                        font.pixelSize: Theme.fontSizeMedium
+                        font.weight: Font.Bold
+                        color: Theme.primary
+                    }
+                    StyledText {
+                        width: parent.width
+                        text: "Widgets are added from the Bar widgets page, not from this settings page. Each app group is added to the bar individually: open Settings → Bar → Bar widgets, find the entry named \"App Stack – <group name>\", and add it to a bar section. Repeat for every group you want on the bar. The widget shows the group you picked when adding it; to change which group a bar slot shows, remove that widget and add the desired group instead."
+                        font.pixelSize: Theme.fontSizeMedium
+                        color: Theme.surfaceVariantText
+                        wrapMode: Text.WordWrap
+                    }
+
+                    StyledText {
+                        width: parent.width
+                        text: "4. Remove a group"
+                        font.pixelSize: Theme.fontSizeMedium
+                        font.weight: Font.Bold
+                        color: Theme.primary
+                    }
+                    StyledText {
+                        width: parent.width
+                        text: "A group can only be deleted once its widget has been removed from the bar. Open Settings → Bar → Bar widgets and remove the \"App Stack – <group name>\" entry, then return here and click \"Delete\" next to the group. If the group is still linked to a bar widget, deletion is blocked and a warning is shown. This is because the plugin cannot reliably remove a widget from every bar, so it asks you to remove it manually first."
+                        font.pixelSize: Theme.fontSizeMedium
+                        color: Theme.surfaceVariantText
+                        wrapMode: Text.WordWrap
+                    }
+
+                    StyledText {
+                        width: parent.width
+                        text: "Notes"
+                        font.pixelSize: Theme.fontSizeMedium
+                        font.weight: Font.Bold
+                        color: Theme.primary
+                    }
+                    StyledText {
+                        width: parent.width
+                        text: "• Python 3 is optional — it is only needed for the \"+ Installed Apps\" picker. Without it, use \"+ Add Custom App\".\n• Group name, icon, and label changes take effect when you click \"Save\".\n• Apps added or removed from the widget's popout are saved immediately."
+                        font.pixelSize: Theme.fontSizeMedium
+                        color: Theme.surfaceVariantText
+                        wrapMode: Text.WordWrap
+                    }
+                }
+            }
+        }
 
         // ══════════════════════════════════════════════════════════════════
         // ── Group Management Header ───────────────────────────────────────

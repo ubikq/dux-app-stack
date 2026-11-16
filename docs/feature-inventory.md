@@ -62,6 +62,7 @@ Variant (group) config shape:
 | G17 | Bordered edit panel | `StyledRect` with `outlineVariant` border | ✅ |
 | G18 | Group list scrollbar | `Flickable` + custom always-visible thumb | ✅ |
 | G19 | Auto-scroll to selected group | `scrollToSelected()` on selection change | ✅ |
+| G20 | Collapsible "How to use" panel | `helpExpanded` + `help` icon header | ✅ |
 
 > **Deleting a group:** `PluginService.removePluginVariant()` also calls
 > `removeWidgetFromDankBar(fullId)`, so any bar widget bound to that group is
