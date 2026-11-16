@@ -80,7 +80,7 @@ sudo apt install python3
 ## Getting the plugin
 
 ```bash
-git clone https://github.com/ubikq/dms-app-stack.git
+git clone https://github.com/ubikq/dux-app-stack.git
 ```
 
 ---
