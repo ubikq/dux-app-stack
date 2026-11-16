@@ -26,7 +26,10 @@ PluginSettings {
 
     // ── State ─────────────────────────────────────────────────────────────
     // Groups are stored as DMS variants (one variant per group).
-    property var groupsArray: root.variants
+    property var groupsArray: {
+        variantsRevision  // re-evaluate whenever variants change
+        return (root.variants || []).slice()
+    }
 
     // One-time migration: legacy `groups` JSON array → variants.
     // Also restore the last-edited group so reopening the page is less confusing.
@@ -35,11 +38,30 @@ PluginSettings {
         var saved = root.loadState("selectedGroupIndex", -1)
         if (saved >= 0 && saved < root.groupsArray.length)
             root.selectedGroupIndex = saved
+        Qt.callLater(root.beginEdit)
     }
 
     onSelectedGroupIndexChanged: {
         if (selectedGroupIndex >= 0)
             root.saveState("selectedGroupIndex", selectedGroupIndex)
+        root.beginEdit()
+        root.editingOpen = true
+        // Reset the text inputs (user typing breaks their text binding).
+        groupNameInput.text = root.selectedGroup ? (root.selectedGroup.name || "") : ""
+        groupIconInput.text = root.selectedGroup ? (root.selectedGroup.icon || "apps") : "apps"
+        Qt.callLater(root.scrollToSelected)
+    }
+
+    onVariantsChanged: variantsRevision++
+
+    // `variants` may be mutated in place, so onVariantsChanged can be missed.
+    // Bump the revision on any plugin-data change to force the list to rebuild.
+    Connections {
+        target: pluginService
+        function onPluginDataChanged(changedPluginId) {
+            if (changedPluginId === pluginId)
+                root.variantsRevision++
+        }
     }
 
     function migrateLegacyGroups() {
@@ -62,6 +84,10 @@ PluginSettings {
 
     property int selectedGroupIndex: -1
     property int pendingDeleteIndex: -1
+    readonly property bool pendingDeleteInUse: {
+        if (pendingDeleteIndex < 0 || pendingDeleteIndex >= groupsArray.length) return false
+        return isVariantInUse(groupsArray[pendingDeleteIndex].id)
+    }
     property bool pickerVisible: false
     property bool pickerLoading: false
     property bool pickerFailed: false
@@ -114,25 +140,87 @@ PluginSettings {
         Qt.resolvedUrl("./scripts/list-apps.py").toString().replace(/^file:\/\//, "")
 
     // ── Computed ──────────────────────────────────────────────────────────
-    readonly property var selectedGroup:
+    // The persisted variant for the selected index.
+    readonly property var savedGroup:
         (selectedGroupIndex >= 0 && selectedGroupIndex < groupsArray.length)
             ? groupsArray[selectedGroupIndex] : null
+
+    // Working copy of the selected group. The UI edits this; changes are only
+    // written back to the variant when the user clicks Save.
+    property var draftGroup: null
+    property bool draftDirty: false
+    property bool editingOpen: false
+    property int variantsRevision: 0
+
+    // The UI reads/writes the draft.
+    readonly property var selectedGroup: draftGroup
 
         // ── Functions ─────────────────────────────────────────────────────────
     
         // No-op: variants persist themselves via the PluginSettings API.
         function saveGroups() {}
     
-        function addGroup() {
-            var idx = groupsArray.length
-            var variantId = root.createVariant("Group " + (idx + 1), {
-                icon: "apps",
-                showLabel: false,
-                apps: []
-            })
-            selectedGroupIndex = idx
-            return variantId
+    // Load the selected variant into the draft.
+    // Read groupsArray[selectedGroupIndex] directly: the `savedGroup` binding
+    // may not have re-evaluated yet when this runs from onSelectedGroupIndexChanged.
+    function beginEdit() {
+        var g = (selectedGroupIndex >= 0 && selectedGroupIndex < groupsArray.length)
+                ? groupsArray[selectedGroupIndex] : null
+        if (!g) {
+            draftGroup = null
+            draftDirty = false
+            return
         }
+        draftGroup = JSON.parse(JSON.stringify(g))
+        draftDirty = false
+    }
+
+    // Keep the selected group visible in the list.
+    function scrollToSelected() {
+        if (selectedGroupIndex < 0 || !groupListFlick) return
+        var y = selectedGroupIndex * 42
+        var maxY = Math.max(0, groupListFlick.contentHeight - groupListFlick.height)
+        groupListFlick.contentY = Math.min(y, maxY)
+    }
+
+    // Commit the draft to the variant.
+    function saveDraft() {
+        // Use the draft's own id: for a freshly-added group the variants list
+        // may not have refreshed yet, so savedGroup can still be null.
+        if (!draftGroup || !draftGroup.id) return
+        root.updateVariant(draftGroup.id, draftGroup)
+        draftDirty = false
+        root.editingOpen = false
+        ToastService.showInfo("Saved", "Group \"" + (draftGroup.name || "Unnamed") + "\" saved")
+    }
+
+    // Discard unsaved edits and close the editor.
+    function cancelDraft() {
+        beginEdit()
+        root.editingOpen = false
+    }
+
+    function addGroup() {
+        var idx = groupsArray.length
+        var name = "Group " + (idx + 1)
+        var variantId = root.createVariant(name, {
+            icon: "apps",
+            showLabel: false,
+            apps: []
+        })
+        selectedGroupIndex = idx
+        // Set the draft immediately (variants may not have refreshed yet).
+        draftGroup = {
+            id: variantId,
+            name: name,
+            icon: "apps",
+            showLabel: false,
+            apps: []
+        }
+        draftDirty = false
+        root.editingOpen = true
+        return variantId
+    }
     
         function removeGroup(idx) {
             if (idx < 0 || idx >= groupsArray.length) return
@@ -141,21 +229,49 @@ PluginSettings {
                 selectedGroupIndex = groupsArray.length > 0 ? groupsArray.length - 1 : -1
         }
     
-        function updateGroupField(field, value) {
-            if (selectedGroupIndex < 0 || !selectedGroup) return
-            var patch = {}
-            patch[field] = value
-            root.updateVariant(selectedGroup.id, patch)
+        // True if a bar widget is currently bound to this variant.
+        // DMS's removePluginVariant() only strips the widget from the primary bar,
+        // so we block deletion and ask the user to remove the widget manually.
+        function isVariantInUse(variantId) {
+            if (!variantId) return false
+            var fullId = root.pluginId + ":" + variantId
+            var bars = []
+            try { bars = SettingsData.barConfigs || [] } catch (e) { return false }
+            for (var i = 0; i < bars.length; i++) {
+                var b = bars[i] || {}
+                var lists = [b.leftWidgets || [], b.centerWidgets || [], b.rightWidgets || []]
+                for (var j = 0; j < lists.length; j++) {
+                    var ws = lists[j]
+                    for (var k = 0; k < ws.length; k++) {
+                        var w = ws[k]
+                        var id = (typeof w === "string") ? w : (w && w.id)
+                        if (id === fullId) return true
+                    }
+                }
+            }
+            return false
         }
     
-        function saveGroupApps(apps) {
-            if (selectedGroupIndex < 0 || !selectedGroup) return
-            root.updateVariant(selectedGroup.id, { apps: apps })
-        }
+    // Edit the draft (not the persisted variant).
+    function updateGroupField(field, value) {
+        if (!draftGroup) return
+        var d = JSON.parse(JSON.stringify(draftGroup))
+        d[field] = value
+        draftGroup = d
+        draftDirty = true
+    }
+    
+    function saveGroupApps(apps) {
+        if (!draftGroup) return
+        var d = JSON.parse(JSON.stringify(draftGroup))
+        d.apps = apps
+        draftGroup = d
+        draftDirty = true
+    }
 
     function addApp(appData) {
-        if (!selectedGroup) return
-        var apps = selectedGroup.apps || []
+        if (!draftGroup) return
+        var apps = draftGroup.apps || []
         for (var i = 0; i < apps.length; i++) {
             if (apps[i].exec === appData.exec) {
                 ToastService.showInfo("Already added", appData.name + " is already in this group")
@@ -178,14 +294,14 @@ PluginSettings {
     }
 
     function removeApp(idx) {
-        if (!selectedGroup) return
-        var apps = selectedGroup.apps.filter(function(_, i) { return i !== idx })
+        if (!draftGroup) return
+        var apps = draftGroup.apps.filter(function(_, i) { return i !== idx })
         saveGroupApps(apps)
     }
 
     function updateApp(idx, updates) {
-        if (!selectedGroup) return
-        var apps = selectedGroup.apps.slice()
+        if (!draftGroup) return
+        var apps = draftGroup.apps.slice()
         apps[idx] = Object.assign({}, apps[idx], updates)
         saveGroupApps(apps)
     }
@@ -260,12 +376,16 @@ PluginSettings {
     function openPicker() {
         root.pickerVisible = !root.pickerVisible
         if (root.pickerVisible) {
-            root.pickerLoading = true
             root.pickerFailed = false
-            if (systemAppsModel.count === 0)
+            if (systemAppsModel.count === 0) {
+                // First open: scan the system for installed apps.
+                root.pickerLoading = true
                 appScanner.running = true
-            else
+            } else {
+                // Already scanned: reuse the cached list (no "Scanning…" hang).
+                root.pickerLoading = false
                 root.filterSystemApps()
+            }
         }
     }
 
@@ -345,14 +465,24 @@ PluginSettings {
         }
 
         // ── Group list ────────────────────────────────────────────────────
-        ScrollView {
+        Item {
             width: parent.width
-            height: Math.min(groupsArray.length * 44 + 10, 200)
-            clip: true
+            height: Math.min(groupsArray.length * 44 + 10, 300)
 
-            Column {
-                width: parent.width
-                spacing: 2
+            Flickable {
+                id: groupListFlick
+                anchors {
+                    left: parent.left; right: groupScrollTrack.left; top: parent.top; bottom: parent.bottom
+                }
+                contentWidth: width
+                contentHeight: groupListColumn.implicitHeight
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+
+                Column {
+                    id: groupListColumn
+                    width: groupListFlick.width
+                    spacing: 2
 
                 Repeater {
                     model: root.groupsArray
@@ -369,14 +499,27 @@ PluginSettings {
                             radius: Theme.cornerRadius
                         }
 
+                        // Subtle divider between rows (not after the last one)
+                        Rectangle {
+                            anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+                            height: 1
+                            color: Theme.outlineVariant
+                            visible: index < root.groupsArray.length - 1
+                        }
+
                         // Select area declared BEFORE the row so the delete
                         // button (inside the row) stays on top and clickable.
                         MouseArea {
                             anchors.fill: parent
-                            onClicked: root.selectedGroupIndex = index
+                            onClicked: {
+                                root.selectedGroupIndex = index
+                                // Re-open the editor even when the index is unchanged.
+                                root.beginEdit()
+                                root.editingOpen = true
+                            }
                         }
 
-                        Row {
+                        RowLayout {
                             anchors {
                                 left: parent.left; right: parent.right
                                 verticalCenter: parent.verticalCenter
@@ -385,35 +528,40 @@ PluginSettings {
                             spacing: Theme.spacingS
 
                             DankIcon {
+                                Layout.preferredWidth: Theme.iconSize
+                                Layout.preferredHeight: Theme.iconSize
                                 name: modelData.icon || "apps"
                                 size: Theme.iconSize
                                 color: Theme.primary
                             }
 
                             StyledText {
+                                Layout.fillWidth: true
                                 text: modelData.name || "Unnamed"
                                 font.pixelSize: Theme.fontSizeMedium
                                 color: Theme.surfaceText
                                 elide: Text.ElideRight
-                                width: parent.width - Theme.iconSize * 2 - Theme.spacingS
                             }
 
-                            Item {
-                                width: Theme.iconSize
-                                height: Theme.iconSize
+                            StyledRect {
+                                Layout.preferredHeight: deleteGroupLabel.implicitHeight + Theme.spacingXS * 2
+                                Layout.preferredWidth: deleteGroupLabel.implicitWidth + Theme.spacingM * 2
+                                radius: Theme.cornerRadius
+                                color: deleteGroupMouse.containsMouse ? Theme.error : Theme.surfaceContainerHighest
 
+                                StyledText {
+                                    id: deleteGroupLabel
+                                    anchors.centerIn: parent
+                                    text: "Delete"
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    color: deleteGroupMouse.containsMouse ? Theme.surface : Theme.error
+                                }
                                 MouseArea {
-                                    id: groupDeleteMouse
+                                    id: deleteGroupMouse
                                     anchors.fill: parent
                                     hoverEnabled: true
                                     cursorShape: Qt.PointingHandCursor
                                     onClicked: root.pendingDeleteIndex = index
-                                    DankIcon {
-                                        name: "delete"
-                                        size: Theme.iconSize
-                                        color: groupDeleteMouse.containsMouse ? Theme.error : Theme.surfaceVariantText
-                                        anchors.centerIn: parent
-                                    }
                                 }
                             }
                         }
@@ -428,6 +576,24 @@ PluginSettings {
                     color: Theme.surfaceVariantText
                     horizontalAlignment: Text.AlignHCenter
                     width: parent.width
+                }
+                }
+            }
+
+            // Custom always-visible scrollbar (the default one fades out).
+            Item {
+                id: groupScrollTrack
+                anchors { right: parent.right; top: parent.top; bottom: parent.bottom }
+                width: 10
+                visible: groupListFlick.contentHeight > groupListFlick.height
+
+                Rectangle {
+                    width: 6
+                    radius: 3
+                    color: Theme.primary
+                    x: 2
+                    height: Math.max(30, groupScrollTrack.height * (groupListFlick.height / Math.max(1, groupListFlick.contentHeight)))
+                    y: (groupScrollTrack.height - height) * (groupListFlick.contentY / Math.max(1, groupListFlick.contentHeight - groupListFlick.height))
                 }
             }
         }
@@ -450,15 +616,23 @@ PluginSettings {
 
                 StyledText {
                     width: parent.width
-                    text: "Delete group \"" + (root.pendingDeleteIndex >= 0 && root.pendingDeleteIndex < root.groupsArray.length ? (root.groupsArray[root.pendingDeleteIndex].name || "Unnamed") : "") + "\"?"
+                    text: {
+                        var nm = (root.pendingDeleteIndex >= 0 && root.pendingDeleteIndex < root.groupsArray.length)
+                                 ? (root.groupsArray[root.pendingDeleteIndex].name || "Unnamed") : ""
+                        return root.pendingDeleteInUse
+                               ? "Can't delete: \"" + nm + "\" is currently linked to a bar widget."
+                               : "Delete group \"" + nm + "\"?"
+                    }
                     font.pixelSize: Theme.fontSizeMedium
-                    color: Theme.surfaceText
+                    color: root.pendingDeleteInUse ? (Theme.error || Theme.surfaceText) : Theme.surfaceText
                     wrapMode: Text.WordWrap
                 }
 
                 StyledText {
                     width: parent.width
-                    text: "Any bar widget using this group will also be removed from the bar."
+                    text: root.pendingDeleteInUse
+                          ? "Remove that widget from the bar first, then delete the group."
+                          : "Any bar widget using this group will also be removed from the bar."
                     font.pixelSize: Theme.fontSizeSmall
                     color: Theme.surfaceVariantText
                     wrapMode: Text.WordWrap
@@ -490,6 +664,7 @@ PluginSettings {
                     }
 
                     StyledRect {
+                        visible: !root.pendingDeleteInUse
                         height: confirmDeleteLabel.implicitHeight + Theme.spacingXS * 2
                         width: confirmDeleteLabel.implicitWidth + Theme.spacingM * 2
                         radius: Theme.cornerRadius
@@ -519,13 +694,32 @@ PluginSettings {
             }
         }
 
+        // ── Separator: groups list vs. selected group settings ────────────
+        Rectangle {
+            width: parent.width
+            height: 1
+            color: Theme.outlineVariant
+        }
+
         // ══════════════════════════════════════════════════════════════════
         // ── Selected Group Settings ───────────────────────────────────────
         // ══════════════════════════════════════════════════════════════════
-        Column {
+        StyledRect {
             width: parent.width
-            spacing: Theme.spacingS
-            visible: root.selectedGroup !== null
+            height: groupConfigColumn.implicitHeight + appsColumn.implicitHeight + Theme.spacingS + Theme.spacingL * 2
+            radius: Theme.cornerRadius
+            color: Theme.surfaceContainerLow || Theme.surfaceContainerHigh
+            border.color: Theme.outlineVariant
+            border.width: 1
+            visible: root.selectedGroup !== null && root.editingOpen
+
+            Column {
+                id: groupConfigColumn
+                anchors {
+                    left: parent.left; right: parent.right; top: parent.top
+                    leftMargin: Theme.spacingL; rightMargin: Theme.spacingL; topMargin: Theme.spacingL
+                }
+                spacing: Theme.spacingS
 
             // ── Editing header ────────────────────────────────────────────
             StyledText {
@@ -535,6 +729,69 @@ PluginSettings {
                 color: Theme.primary
                 elide: Text.ElideRight
                 width: parent.width
+            }
+
+            // ── Save / Cancel ─────────────────────────────────────────────
+            Row {
+                width: parent.width
+                spacing: Theme.spacingS
+
+                StyledRect {
+                    height: saveGroupLabel.implicitHeight + Theme.spacingS * 2
+                    width: saveGroupLabel.implicitWidth + Theme.spacingL * 2
+                    radius: Theme.cornerRadius
+                    color: root.draftDirty
+                           ? (saveGroupMouse.containsMouse ? Theme.primary : (Theme.primaryContainer || Theme.surfaceContainerHigh))
+                           : Theme.surfaceContainerHigh
+
+                    StyledText {
+                        id: saveGroupLabel
+                        anchors.centerIn: parent
+                        text: "Save"
+                        font.pixelSize: Theme.fontSizeMedium
+                        color: !root.draftDirty
+                               ? Theme.surfaceVariantText
+                               : (saveGroupMouse.containsMouse ? Theme.primaryText : Theme.primary)
+                    }
+                    MouseArea {
+                        id: saveGroupMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        enabled: root.draftDirty
+                        cursorShape: root.draftDirty ? Qt.PointingHandCursor : Qt.ArrowCursor
+                        onClicked: root.saveDraft()
+                    }
+                }
+
+                StyledRect {
+                    height: cancelGroupLabel.implicitHeight + Theme.spacingS * 2
+                    width: cancelGroupLabel.implicitWidth + Theme.spacingL * 2
+                    radius: Theme.cornerRadius
+                    color: cancelGroupMouse.containsMouse ? Theme.surfaceContainerHighest : Theme.surfaceContainerHigh
+
+                    StyledText {
+                        id: cancelGroupLabel
+                        anchors.centerIn: parent
+                        text: "Cancel"
+                        font.pixelSize: Theme.fontSizeMedium
+                        color: Theme.surfaceText
+                    }
+                    MouseArea {
+                        id: cancelGroupMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.cancelDraft()
+                    }
+                }
+
+                StyledText {
+                    visible: root.draftDirty
+                    text: "Unsaved changes"
+                    font.pixelSize: Theme.fontSizeSmall
+                    color: Theme.tertiary || Theme.primary
+                    anchors.verticalCenter: parent.verticalCenter
+                }
             }
 
             // ── Group name ────────────────────────────────────────────────
@@ -606,7 +863,14 @@ PluginSettings {
                         text: root.selectedGroup ? (root.selectedGroup.icon || "apps") : "apps"
                         color: Theme.surfaceText
                         placeholderText: "Icon name (e.g. apps, folder, code)"
+                        placeholderTextColor: Theme.surfaceVariantText
                         font.pixelSize: Theme.fontSizeMedium
+                        leftPadding: Theme.spacingM
+                        rightPadding: Theme.spacingM
+                        background: Rectangle {
+                            color: Theme.surfaceContainerHigh
+                            radius: Theme.cornerRadius
+                        }
                         onTextChanged: {
                             var cur = root.selectedGroup ? (root.selectedGroup.icon || "apps") : "apps"
                             if (cur !== text)
@@ -716,6 +980,7 @@ PluginSettings {
                                         cursorShape: Qt.PointingHandCursor
                                         onClicked: {
                                             root.updateGroupField("icon", modelData)
+                                            groupIconInput.text = modelData
                                             root.iconPickerVisible = false
                                             iconPickerSearchInput.text = ""
                                             root.iconPickerFilter = ""
@@ -771,7 +1036,11 @@ PluginSettings {
         // ── Apps Management ───────────────────────────────────────────────
         // ══════════════════════════════════════════════════════════════════
         Column {
-            width: parent.width
+            id: appsColumn
+            anchors {
+                left: parent.left; right: parent.right; top: groupConfigColumn.bottom
+                leftMargin: Theme.spacingL; rightMargin: Theme.spacingL; topMargin: Theme.spacingS
+            }
             spacing: Theme.spacingS
             visible: root.selectedGroup !== null
 
@@ -792,16 +1061,17 @@ PluginSettings {
                     Layout.preferredHeight: browseBtnLabel.implicitHeight + Theme.spacingS * 2
                     Layout.preferredWidth: browseBtnLabel.implicitWidth + Theme.spacingL * 2
                     radius: Theme.cornerRadius
-                    color: browseBtnMouse.containsMouse
-                           ? (Theme.primaryContainer || Theme.surfaceContainerHighest)
-                           : Theme.surfaceContainerHigh
+                    // Filled while the picker is open so the "hide" action stands out.
+                    color: root.pickerVisible
+                           ? (browseBtnMouse.containsMouse ? Theme.primary : (Theme.primaryContainer || Theme.surfaceContainerHighest))
+                           : (browseBtnMouse.containsMouse ? (Theme.primaryContainer || Theme.surfaceContainerHighest) : Theme.surfaceContainerHigh)
 
                     StyledText {
                         id: browseBtnLabel
                         anchors.centerIn: parent
-                        text: root.pickerVisible ? "Hide App Picker" : "Choose from Installed Apps"
+                        text: root.pickerVisible ? "× Close Picker" : "+ Installed Apps"
                         font.pixelSize: Theme.fontSizeMedium
-                        color: Theme.primary
+                        color: root.pickerVisible && browseBtnMouse.containsMouse ? Theme.primaryText : Theme.primary
                     }
                     MouseArea {
                         id: browseBtnMouse
@@ -816,16 +1086,17 @@ PluginSettings {
                     Layout.preferredHeight: addAppBtnLabel.implicitHeight + Theme.spacingS * 2
                     Layout.preferredWidth: addAppBtnLabel.implicitWidth + Theme.spacingL * 2
                     radius: Theme.cornerRadius
-                    color: addAppBtnMouse.containsMouse
-                           ? (Theme.primaryContainer || Theme.surfaceContainerHighest)
-                           : Theme.surfaceContainerHigh
+                    // Filled while the manual form is open so the "hide" action stands out.
+                    color: root.showManualForm
+                           ? (addAppBtnMouse.containsMouse ? Theme.primary : (Theme.primaryContainer || Theme.surfaceContainerHighest))
+                           : (addAppBtnMouse.containsMouse ? (Theme.primaryContainer || Theme.surfaceContainerHighest) : Theme.surfaceContainerHigh)
 
                     StyledText {
                         id: addAppBtnLabel
                         anchors.centerIn: parent
-                        text: "+ Add App"
+                        text: root.showManualForm ? "× Close Manual Add" : "+ Add Custom App"
                         font.pixelSize: Theme.fontSizeMedium
-                        color: Theme.primary
+                        color: root.showManualForm && addAppBtnMouse.containsMouse ? Theme.primaryText : Theme.primary
                     }
                     MouseArea {
                         id: addAppBtnMouse
@@ -873,7 +1144,14 @@ PluginSettings {
                         width: parent.width
                         placeholderText: "e.g. Firefox"
                         color: Theme.surfaceText
+                        placeholderTextColor: Theme.surfaceVariantText
                         font.pixelSize: Theme.fontSizeMedium
+                        leftPadding: Theme.spacingM
+                        rightPadding: Theme.spacingM
+                        background: Rectangle {
+                            color: Theme.surfaceContainerHigh
+                            radius: Theme.cornerRadius
+                        }
                     }
                 }
 
@@ -892,7 +1170,14 @@ PluginSettings {
                         width: parent.width
                         placeholderText: "e.g. firefox or /usr/bin/app --flag"
                         color: Theme.surfaceText
+                        placeholderTextColor: Theme.surfaceVariantText
                         font.pixelSize: Theme.fontSizeMedium
+                        leftPadding: Theme.spacingM
+                        rightPadding: Theme.spacingM
+                        background: Rectangle {
+                            color: Theme.surfaceContainerHigh
+                            radius: Theme.cornerRadius
+                        }
                     }
                 }
 
@@ -928,8 +1213,15 @@ PluginSettings {
                             width: parent.width - Theme.iconSize - Theme.spacingM * 4 - 60
                             placeholderText: "Icon name"
                             color: Theme.surfaceText
+                            placeholderTextColor: Theme.surfaceVariantText
                             font.pixelSize: Theme.fontSizeMedium
+                            leftPadding: Theme.spacingM
+                            rightPadding: Theme.spacingM
                             text: root.editingAppIcon
+                            background: Rectangle {
+                                color: Theme.surfaceContainerHigh
+                                radius: Theme.cornerRadius
+                            }
                             onTextChanged: {
                                 if (root.editingAppIcon !== text)
                                     root.editingAppIcon = text
@@ -1063,7 +1355,7 @@ PluginSettings {
                         anchors.centerIn: parent
                         text: "Add App"
                         font.pixelSize: Theme.fontSizeMedium
-                        color: Theme.primaryText
+                        color: commitBtnMouse.containsMouse ? Theme.primaryText : Theme.primary
                     }
                     MouseArea {
                         id: commitBtnMouse
@@ -1077,13 +1369,15 @@ PluginSettings {
 
             // ── App list ──────────────────────────────────────────────────
             ScrollView {
+                id: appListScroll
                 width: parent.width
                 height: Math.min((root.selectedGroup ? (root.selectedGroup.apps || []).length : 0) * 60 + 10, 300)
                 clip: true
+                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
                 visible: root.selectedGroup && (root.selectedGroup.apps || []).length > 0
 
                 Column {
-                    width: parent.width
+                    width: appListScroll.availableWidth
                     spacing: 2
 
                     Repeater {
@@ -1131,13 +1425,14 @@ PluginSettings {
                                 Column {
                                     anchors.verticalCenter: parent.verticalCenter
                                     spacing: 2
+                                    width: parent.width - Theme.iconSize - Theme.spacingS * 2
 
                                     StyledText {
                                         text: modelData.name || "Unnamed"
                                         font.pixelSize: Theme.fontSizeMedium
                                         color: Theme.surfaceText
                                         elide: Text.ElideRight
-                                        width: parent.width - Theme.spacingS
+                                        width: parent.width
                                     }
 
                                     StyledText {
@@ -1146,7 +1441,7 @@ PluginSettings {
                                         font.pixelSize: Theme.fontSizeSmall
                                         color: Theme.surfaceVariantText
                                         elide: Text.ElideRight
-                                        width: parent.width - Theme.spacingS
+                                        width: parent.width
                                     }
                                 }
                             }
@@ -1270,6 +1565,8 @@ PluginSettings {
                     id: pickerSearch
                     width: parent.width
                     placeholderText: "Search apps..."
+                    color: Theme.surfaceText
+                    placeholderTextColor: Theme.surfaceVariantText
                     font.pixelSize: Theme.fontSizeMedium
                     visible: !root.pickerLoading && systemAppsModel.count > 0
                     onTextChanged: root.pickerFilter = text
@@ -1338,6 +1635,7 @@ PluginSettings {
                             Column {
                                 anchors.verticalCenter: parent.verticalCenter
                                 spacing: 2
+                                width: parent.width - Theme.iconSize - Theme.spacingS * 2
 
                                 StyledText {
                                     text: name || ""
@@ -1366,6 +1664,7 @@ PluginSettings {
                     color: Theme.surfaceVariantText
                 }
             }
+        }
         }
     }
 

@@ -57,6 +57,11 @@ Variant (group) config shape:
 | G12 | Remember last-edited group | `saveState`/`loadState("selectedGroupIndex")` | ✅ |
 | G13 | Legacy migration | `migrateLegacyGroups()` converts old `groups` JSON → variants | ✅ |
 | G14 | Delete group (with confirmation) | trash `DankIcon` → `pendingDeleteIndex` → confirm row → `removeGroup()` | ✅ |
+| G15 | Block delete if group is in use | `isVariantInUse()` scans `SettingsData.barConfigs` | ✅ |
+| G16 | Save / Cancel editor | draft model (`draftGroup` / `draftDirty` / `editingOpen`) | ✅ |
+| G17 | Bordered edit panel | `StyledRect` with `outlineVariant` border | ✅ |
+| G18 | Group list scrollbar | `Flickable` + custom always-visible thumb | ✅ |
+| G19 | Auto-scroll to selected group | `scrollToSelected()` on selection change | ✅ |
 
 > **Deleting a group:** `PluginService.removePluginVariant()` also calls
 > `removeWidgetFromDankBar(fullId)`, so any bar widget bound to that group is
@@ -69,7 +74,7 @@ Variant (group) config shape:
 |---|---|---|---|
 | A1 | List apps in selected group | `ScrollView` + `Repeater` over `selectedGroup.apps` | ✅ |
 | A2 | Real app icons | `Image` from `modelData.iconPath` (fallback `DankIcon`) | ✅ |
-| A3 | Add app manually | `+ Add App` button → `showManualForm` | ✅ |
+| A3 | Add app manually | `+ Add Custom App` / `× Close Manual Add` button → `showManualForm` | ✅ |
 | A4 | Manual form: name | `TextField` `manualNameInput` | ✅ |
 | A5 | Manual form: command | `TextField` `manualExecInput` | ✅ |
 | A6 | Manual form: icon | `TextField` `manualIconInput` | ✅ |
@@ -82,12 +87,13 @@ Variant (group) config shape:
 | A13 | Hide exec text for picker apps | `visible: modelData.source !== "picker"` | ✅ |
 | A14 | Hide edit button for picker apps | `visible: modelData.source !== "picker"` | ✅ |
 | A15 | Capacity warning at 10 apps | `StyledRect` + `warningText` | ✅ |
+| A16 | Visible form fields | `TextField` with `surfaceContainerHigh` background | ✅ |
 
 ### App picker (installed apps)
 
 | # | Feature | Implementation | Status |
 |---|---|---|---|
-| P1 | Open/close picker | `Choose from Installed Apps` / `Hide App Picker` button → `root.openPicker()` | ✅ |
+| P1 | Open/close picker | `+ Installed Apps` / `× Close Picker` button → `root.openPicker()` | ✅ |
 | P2 | Scan installed apps | `Process` `appScanner` runs `scripts/list-apps.py` | ✅ |
 | P3 | Loading indicator | `StyledText` "Scanning installed applications…" | ✅ |
 | P4 | Python-missing error | `StyledRect` + `pickerErrText` with install instructions | ✅ |
