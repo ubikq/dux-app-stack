@@ -151,6 +151,7 @@ PluginSettings {
     property bool draftDirty: false
     property bool editingOpen: false
     property bool helpExpanded: false
+    property string newlyCreatedId: ""
     property int variantsRevision: 0
 
     // The UI reads/writes the draft.
@@ -190,13 +191,19 @@ PluginSettings {
         // may not have refreshed yet, so savedGroup can still be null.
         if (!draftGroup || !draftGroup.id) return
         root.updateVariant(draftGroup.id, draftGroup)
+        root.newlyCreatedId = ""
         draftDirty = false
         root.editingOpen = false
         ToastService.showInfo("Saved", "Group \"" + (draftGroup.name || "Unnamed") + "\" saved")
     }
 
     // Discard unsaved edits and close the editor.
+    // If the group was just created (and not saved), remove it again.
     function cancelDraft() {
+        if (root.newlyCreatedId) {
+            root.removeVariant(root.newlyCreatedId)
+            root.newlyCreatedId = ""
+        }
         beginEdit()
         root.editingOpen = false
     }
@@ -219,6 +226,7 @@ PluginSettings {
             apps: []
         }
         draftDirty = false
+        root.newlyCreatedId = variantId
         root.editingOpen = true
         return variantId
     }
@@ -614,7 +622,8 @@ PluginSettings {
         // ── Group list ────────────────────────────────────────────────────
         Item {
             width: parent.width
-            height: Math.min(groupsArray.length * 44 + 10, 300)
+            // Give the empty-state message enough room (no scrollbar for it).
+            height: groupsArray.length === 0 ? 50 : Math.min(groupsArray.length * 44 + 10, 300)
 
             Flickable {
                 id: groupListFlick
@@ -659,6 +668,7 @@ PluginSettings {
                         MouseArea {
                             anchors.fill: parent
                             onClicked: {
+                                root.newlyCreatedId = ""
                                 root.selectedGroupIndex = index
                                 // Re-open the editor even when the index is unchanged.
                                 root.beginEdit()
