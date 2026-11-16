@@ -9,6 +9,7 @@ A [Dux Shell](https://duxlabs.dev) bar widget that manages multiple independent 
 ## Contents
 
 - [Overview](#overview)
+- [What's new](#whats-new)
 - [Requirements](#requirements)
 - [Getting the plugin](#getting-the-plugin)
 - [Installation](#installation)
@@ -33,6 +34,22 @@ A [Dux Shell](https://duxlabs.dev) bar widget that manages multiple independent 
 The built-in Apps Dock widget in Dux Shell shows a single shared list of pinned apps across all instances. App Stack solves this by letting you create multiple app groups, each exposed as a **variant**. When you add the widget to the bar, Dux Shell asks which group to attach — so each bar slot gets its own icon, label, and curated set of app shortcuts.
 
 > **Compatibility:** Tested on [niri](https://github.com/YaLTeR/niri) with Dux Shell / Dank Material Shell. Behaviour on other compositors has not been confirmed.
+
+---
+
+## What's new
+
+Version 2.0 is a major rework of the plugin:
+
+- **Multi-group architecture** — rebuilt from a set of separate `appStack_*` plugins into a single plugin that manages many groups. Each group is a DMS **variant**, so one plugin powers every group on your bar.
+- **Per-slot group binding** — each bar widget instance is linked to a specific group via DMS variants, giving every bar slot its own icon, label, and app list.
+- **Richer group management** — add, rename, re-icon, and delete groups with a confirmation step; deletion is blocked while a group is still in use on the bar.
+- **Save / Cancel editing** — group edits are staged in a draft and only applied when you click **Save**.
+- **Installed-apps picker** — browse and search your system's `.desktop` entries (including Flatpak) and add apps with their real icons (requires Python 3).
+- **Inline icon picker** — a searchable Material icon grid for both groups and apps.
+- **Popout app management** — add and remove apps directly from the bar widget's popout.
+- **Collapsible "How to use" panel** — in-app guidance on the settings page.
+- **Legacy migration** — a script converts old `appStack_*` plugin directories into the new multi-group format.
 
 ---
 
